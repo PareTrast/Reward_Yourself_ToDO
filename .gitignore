@@ -165,3 +165,6 @@ storage/
 # Database
 *.sqlite3
 *.db
+
+# Folders
+users/

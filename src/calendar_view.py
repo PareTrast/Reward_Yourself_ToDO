@@ -1,34 +1,29 @@
 import flet as ft
-from datetime import datetime, timedelta
-from database import ToDoList  # Import your ToDoList class
+import arrow
 
-def calendar_view(page: ft.Page, todo_list: ToDoList):
-    def get_7_day_range():
-        today = datetime.now().date()
-        return [today + timedelta(days=i) for i in range(7)]
-
-    def display_tasks_for_date(date):
-        tasks = todo_list.get_tasks(date.strftime("%Y-%m-%d"))
-        return ft.Column([ft.Text(f"{task[1]}") for task in tasks])
-
-    def build_calendar():
-        days = get_7_day_range()
-        return ft.Row(
-            [
-                ft.Column(
+def build_calendar(page: ft.Page):
+    today  = arrow.now()
+    days = []
+    for i in range(7):
+        date = today.shift(days=-today.weekday()+i)
+        day_name = date.format('dddd') # this is the day name. e.g. Sunday
+        day_number = date.format('DD') # this id the day's number. e.g. 15
+        is_today = date == today
+        days.append(
+            ft.Container(
+                content=ft.Column(
                     [
-                        ft.Text(day.strftime("%A, %b %d")),
-                        display_tasks_for_date(day),
-                    ]
-                )
-                for day in days
-            ]
-        )
-
-    return ft.View(
-        "/calendar",
-        [
-            ft.AppBar(title=ft.Text("7-Day Outlook")),
-            build_calendar(),
-        ],
-    )
+                        ft.Text(day_name, size=12, weight="bold", ),
+                        ft.Text(day_number, size=24, weight="bold", color=ft.Colors.RED_200 if is_today else ft.Colors.BLUE_200),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    
+                ),
+                expand=True,
+                height = 100,
+                border = ft.border.all(1, ft.Colors.GREY),
+                border_radius = ft.border_radius.all(5),
+                padding=10,
+            )
+            )
+    return ft.Row(days, alignment=ft.MainAxisAlignment.SPACE_EVENLY, expand=True)

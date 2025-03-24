@@ -1,156 +1,10 @@
 import flet as ft
-import sqlite3
-import shutil
-import hashlib
 import os
+from calendar_view import build_calendar
+from todo_view import ToDoList
+from user_manager import UserManager
+import arrow
 
-class UserManager:
-    def __init__(self, users_dir="users"):
-        self.users_dir = users_dir
-        os.makedirs(self.users_dir, exist_ok=True)
-
-    def register_user(self, username, password):
-        user_path = os.path.join(self.users_dir, username)
-        if os.path.exists(user_path):
-            return False
-        os.makedirs(user_path, exist_ok=True)
-        
-        salt = os.urandom(16)
-        hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
-        with open(user_path, "wb") as f:
-            f.write(salt + hashed_password.encode())
-        return True
-
-    def verify_user(self, username, password):
-        user_path = os.path.join(self.users_dir, username)
-        if not os.path.exists(user_path):
-            return False
-        with open(user_path, "rb") as f:
-            salt = f.read(16)
-            stored_hash = f.read().decode()
-        hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
-        return hashed_password == stored_hash
-
-class ToDoList:
-    def __init__(self, username):
-        db_filename = f"{username}_todo_data.db"
-        self.db_path = os.path.join("users", username, db_filename)
-        print(f"ToDoList db_path: {self.db_path}")
-        # os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.create_tables()
-        self.load_data()
-
-    def create_tables(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task TEXT,
-                done INTEGER
-            )
-        """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rewards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                reward TEXT,
-                medal_cost INTEGER
-            )
-        """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS medals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                count INTEGER
-            )
-        """
-        )
-        cursor.execute("INSERT OR IGNORE INTO medals (count) VALUES (0)")
-        conn.commit()
-        conn.close()
-
-    def load_data(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT count FROM medals LIMIT 1")
-        result = cursor.fetchone()
-        self.medals = result[0] if result else 0
-        conn.close()
-
-    def add_task(self, task):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO tasks (task, done) VALUES (?, ?)", (task, 0))
-        conn.commit()
-        conn.close()
-
-    def mark_task_done(self, task_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        cursor.execute("UPDATE medals SET count = count + 1")
-        conn.commit()
-        conn.close()
-        self.load_data()
-
-    def add_reward(self, reward, medal_cost):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO rewards (reward, medal_cost) VALUES (?, ?)",
-            (reward, medal_cost),
-        )
-        conn.commit()
-        conn.close()
-
-    def claim_reward(self, reward_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT reward, medal_cost FROM rewards WHERE id = ?", (reward_id,)
-        )
-        result = cursor.fetchone()
-        if result:
-            reward, medal_cost = result
-            if self.medals >= medal_cost:
-                cursor.execute("UPDATE medals SET count = count - ?", (medal_cost,))
-                cursor.execute("DELETE FROM rewards WHERE id = ?", (reward_id,))
-                conn.commit()
-                conn.close()
-                self.load_data()
-                return True
-            else:
-                return False
-        else:
-            conn.close()
-            return None
-
-    def get_tasks(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, task, done FROM tasks")
-        tasks = cursor.fetchall()
-        conn.close()
-        return tasks
-
-    def get_rewards(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, reward, medal_cost FROM rewards")
-        rewards = cursor.fetchall()
-        conn.close()
-        return rewards
-
-    def export_data(self, export_path):
-        shutil.copy(self.db_path, export_path)
-
-    def import_data(self, import_path):
-        shutil.copy(import_path, self.db_path)
-        self.load_data()
 
 def main(page: ft.Page):
     print("main function started")
@@ -160,6 +14,17 @@ def main(page: ft.Page):
     user_manager = UserManager()
     todo_list = None
     username = None
+    selected_due_date = None
+    
+
+    def handle_change(e):
+        nonlocal  selected_due_date
+        selected_due_date = e.control.value
+        page.add(ft.Text(f"Date changed: {e.control.value.strftime('%Y-%m-%d')}"))
+        
+
+    def handle_dismissal(e):
+        page.add(ft.Text(f"DatePicker dismissed."))
 
     def check_login():
         users_dir = "users"
@@ -217,7 +82,7 @@ def main(page: ft.Page):
             if user_manager.register_user(
                 register_username.value, register_password.value
             ):
-                page.views.clear()
+                # page.views.clear()
                 show_login_view()
                 page.update()
             else:
@@ -229,6 +94,10 @@ def main(page: ft.Page):
         register_password = ft.TextField(
             label="Password", password=True, can_reveal_password=True
         )
+        def back_to_login(e):
+            #page.views.pop()
+            page.go("/login")
+            
         page.views.append(
             ft.View(
                 "/register",
@@ -236,13 +105,18 @@ def main(page: ft.Page):
                     register_username,
                     register_password,
                     ft.ElevatedButton("Register", on_click=register),
-                    ft.TextButton("Back to Login", on_click=lambda e: page.views.pop()),
+                    ft.TextButton("Back to Login", on_click=back_to_login),
                 ],
             )
         )
         page.go("/register")
 
     def show_main_view():
+        
+        calendar_container = ft.Container(
+            content = build_calendar(page), # add the calendar
+            padding=10
+        )
         task_input = ft.TextField(label="New Task", expand=True)
         reward_input = ft.TextField(label="New Reward", expand=True)
         medal_cost_input = ft.TextField(
@@ -257,7 +131,7 @@ def main(page: ft.Page):
             task_list.controls.clear()
             if todo_list:
                 tasks = todo_list.get_tasks()
-                for task_id, task, done in tasks:
+                for task_id, task, done, selected_date in tasks:
                     task_list.controls.append(
                         ft.Checkbox(
                             label=task,
@@ -289,11 +163,24 @@ def main(page: ft.Page):
             medal_count.value = f"You have {todo_list.medals} medals."
             page.update()
 
+
+
         def add_task(e):
-            todo_list.add_task(task_input.value)
-            task_input.value = ""
-            update_task_list()
-            page.update()
+            nonlocal selected_due_date
+            if selected_due_date:
+                due_date_str = selected_due_date.strftime("%Y-%m-%d")
+                todo_list.add_task(task_input.value, due_date_str)
+                task_input.value = ""
+                selected_due_date = None
+                update_task_list()
+                page.update()
+            else:
+                page.snack_bar = ft.SnackBar(
+                    ft.Text("Please select a due date.")
+                )
+                page.snack_bar.open = True
+                page.update()
+                
 
         def add_reward(e):
             todo_list.add_reward(reward_input.value, int(medal_cost_input.value))
@@ -330,11 +217,22 @@ def main(page: ft.Page):
                         ft.Container(
                             content=ft.ListView(
                                 controls=[
+                                    calendar_container,
                                     ft.Column(
                                         [
                                             ft.Row(
                                                 [
                                                     task_input,
+                                                    ft.ElevatedButton(
+                                                        "Pick Date",
+                                                        on_click=lambda e: page.open(
+                                                            ft.DatePicker(
+                                                            first_date = arrow.now(),
+                                                            on_change=handle_change,
+                                                            on_dismiss=handle_dismissal,        
+                                                            )
+                                                        )
+                                                    ),
                                                     ft.ElevatedButton(
                                                         "Add Task", on_click=add_task
                                                     ),
@@ -456,7 +354,7 @@ def main(page: ft.Page):
         elif page.route == "/login":
             show_login_view()
         elif page.route == "/register":
-            show_register_view(e)
+            show_register_view()
         page.go(page.route)
 
     def view_pop(view):

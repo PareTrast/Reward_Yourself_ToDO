@@ -1,70 +1,139 @@
-import flet as ft
-from datetime import datetime
-from database import ToDoList
+import sqlite3
+import os
+import shutil
 
-def todo_view(page: ft.Page, todo_list: ToDoList):
-    task_input = ft.TextField(label="New Task", expand=True)
-    due_date_picker = ft.DatePicker(field_label_text="Due Date")
-    task_list = ft.Column()
+class ToDoList:
+    def __init__(self, username):
+        db_filename = f"{username}_todo_data.db"
+        self.db_path = os.path.join("users", username, db_filename)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.create_tables()
+        self.load_data()
 
-    def update_task_list():
-        task_list.controls.clear()
-        tasks = todo_list.get_tasks()
-        tasks_by_date = {}
-        for task_id, task, done, due_date in tasks:
-            if due_date:
-                if due_date not in tasks_by_date:
-                    tasks_by_date[due_date] = []
-                tasks_by_date[due_date].append((task_id, task, done, due_date))
+    def create_tables(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task TEXT,
+                done INTEGER,
+                due_date TEXT NULL
+            )
+        """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reward TEXT,
+                medal_cost INTEGER
+            )
+        """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                count INTEGER
+            )
+        """
+        )
+        cursor.execute("INSERT OR IGNORE INTO medals (count) VALUES (0)")
+        conn.commit()
+        conn.close()
+
+    def load_data(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count FROM medals LIMIT 1")
+        result = cursor.fetchone()
+        self.medals = result[0] if result else 0
+        conn.close()
+
+    def add_task(self, task, due_date=None):
+        due_date = due_date or None
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO tasks (task, done, due_date) VALUES (?, ?, ?)", (task, 0, due_date))
+        conn.commit()
+        conn.close()
+
+    def mark_task_done(self, task_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE medals SET count = count + 1")
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        conn.close()
+        self.load_data()
+
+    def add_reward(self, reward, medal_cost):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO rewards (reward, medal_cost) VALUES (?, ?)",
+            (reward, medal_cost),
+        )
+        conn.commit()
+        conn.close()
+
+    def claim_reward(self, reward_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT reward, medal_cost FROM rewards WHERE id = ?", (reward_id,)
+        )
+        result = cursor.fetchone()
+        if result:
+            reward, medal_cost = result
+            if self.medals >= medal_cost:
+                cursor.execute("UPDATE medals SET count = count - ?", (medal_cost,))
+                cursor.execute("DELETE FROM rewards WHERE id = ?", (reward_id,))
+                conn.commit()
+                conn.close()
+                self.load_data()
+                return True
             else:
-                if "No Due Date" not in tasks_by_date:
-                    tasks_by_date["No Due Date"] = []
-                tasks_by_date["No Due Date"].append((task_id, task, done, due_date))
+                return False
+        else:
+            conn.close()
+            return None
 
-        for date, tasks in tasks_by_date.items():
-            task_list.controls.append(ft.Text(f"Tasks for {date}"))
-            for task_id, task, done, due_date in tasks:
-                task_list.controls.append(
-                    ft.Checkbox(
-                        label=f"{task} (Due: {due_date if due_date else 'None'})",
-                        value=done,
-                        on_change=lambda e, task_id=task_id: mark_done(task_id),
-                    )
-                )
-        page.update()
+    def get_tasks(self, due_date=None):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        if due_date:
+            cursor.execute("SELECT id, task, done, due_date FROM tasks WHERE due_date = ?", (due_date,))
+        else:
+            cursor.execute("SELECT id, task, done, due_date FROM tasks")
+        tasks = cursor.fetchall()
+        conn.close()
+        return tasks
 
-    def mark_done(task_id):
-        todo_list.mark_task_done(task_id)
-        update_task_list()
-        page.update()
+    def get_tasks_by_date_range(self, start_date, end_date):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, task, done, due_date FROM tasks WHERE due_date BETWEEN ? AND ?",
+            (start_date, end_date),
+        )
+        tasks = cursor.fetchall()
+        conn.close()
+        return tasks
 
-    def add_task(e):
-        try:
-            due_date = due_date_picker.value.strftime("%Y-%m-%d") if due_date_picker.value else None
-            if task_input.value: #Added here
-                todo_list.add_task(task_input.value, due_date)
-            task_input.value = ""
-            due_date_picker.value = None
-            update_task_list()
-            page.update()
-        except Exception as ex:
-            print(f"Error in add_task: {ex}")
-            page.snack_bar = ft.SnackBar(ft.Text(f"An error occurred: {ex}"))
-            page.snack_bar.open = True
-            page.update()
+    def get_rewards(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, reward, medal_cost FROM rewards")
+        rewards = cursor.fetchall()
+        conn.close()
+        return rewards
 
-    update_task_list()
+    def export_data(self, export_path):
+        shutil.copy(self.db_path, export_path)
 
-    return ft.View(
-        "/todo",
-        [
-            ft.AppBar(title=ft.Text("Todo List")),
-            ft.Column(
-                [
-                    ft.Row([task_input, ft.Container(content=due_date_picker), ft.ElevatedButton("Add Task", on_click=add_task)]),
-                    task_list,
-                ],
-                expand=True,
-            ),
-        ],
-    )
+    def import_data(self, import_path):
+        shutil.copy(import_path, self.db_path)
+        self.load_data()

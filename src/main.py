@@ -390,5 +390,5 @@ def main(page: ft.Page):
         route_change(page.route)
     else:
         show_login_view()
-
+    page.pwa = True
 ft.app(target=main, assets_dir="assets")

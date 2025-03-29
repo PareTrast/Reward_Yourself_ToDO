@@ -45,10 +45,19 @@ arrow = "*"
 
 
 [tool.flet.iOS]
-bundle_id = "com.weekendgrind.rewardyourself"
+bundle_id = "com.weekendgrind.reward-yourself-todo"
 signing_certificate = "Apple Development"
 team_id = "98D65BEXQ9"
 provisioning_profile = "/Users/kaelin/Library/Developer/Xcode/UserData/Provisioning Profiles/6a9c418e-9d8e-4393-bc8f-f782b7a0b9da"
-export_method = "debugging"
+export_method = "development"
 
 [tool.flet.web]
+# Web-specific settings
+web_renderer = "html"  # Use HTML renderer for better mobile compatibility
+assets_dir = "assets"
+favicon = "assets/favicon.png"
+host = "0.0.0.0"
+port = 8000
+python_path = "src"  # Add this line to specify where Python modules are located
+
+

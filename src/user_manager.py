@@ -1,56 +1,29 @@
 import hashlib
 import os
-import sqlite3
 
 
 class UserManager:
-    def __init__(self, db_path="users.db"):
-        self.db_path = db_path
-        self.init_db()
-
-    def init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                salt BLOB,
-                password_hash TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
+    def __init__(self, users_dir="users"):
+        self.users_dir = users_dir
+        os.makedirs(self.users_dir, exist_ok=True)
 
     def register_user(self, username, password):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        try:
-            salt = os.urandom(16)
-            hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
-            cursor.execute(
-                "INSERT INTO users (username, salt, password_hash) VALUES (?, ?, ?)",
-                (username, salt, hashed_password)
-            )
-            conn.commit()
-            return True
-        except sqlite3.IntegrityError:
+        user_path = os.path.join(self.users_dir, f"{username}.txt")
+        if os.path.exists(user_path):
             return False
-        finally:
-            conn.close()
+        
+        salt = os.urandom(16)
+        hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
+        with open(user_path, "wb") as f:
+            f.write(salt + hashed_password.encode())
+        return True
 
     def verify_user(self, username, password):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT salt, password_hash FROM users WHERE username = ?",
-            (username,)
-        )
-        result = cursor.fetchone()
-        conn.close()
-        
-        if not result:
+        user_path = os.path.join(self.users_dir, f"{username}.txt")
+        if not os.path.exists(user_path):
             return False
-            
-        salt, stored_hash = result
+        with open(user_path, "rb") as f:
+            salt = f.read(16)
+            stored_hash = f.read().decode()
         hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
         return hashed_password == stored_hash

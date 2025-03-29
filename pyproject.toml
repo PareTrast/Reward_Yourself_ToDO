@@ -5,10 +5,11 @@ description = ""
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "Flet developer", email = "you@example.com" }
+    { name = "Kaelin", email = "you@example.com" }
 ]
 dependencies = [
-  "flet==0.27.5"
+  "flet==0.27.5",
+  "arrow"
 ]
 
 [tool.flet]
@@ -32,6 +33,7 @@ path = "src"
 [tool.uv]
 dev-dependencies = [
     "flet[all]==0.27.5",
+    "arrow"
 ]
 
 [tool.poetry]
@@ -39,6 +41,8 @@ package-mode = false
 
 [tool.poetry.group.dev.dependencies]
 flet = {extras = ["all"], version = "0.27.5"}
+arrow = "*"
+
 
 [tool.flet.iOS]
 bundle_id = "com.weekendgrind.rewardyourself"
@@ -46,3 +50,5 @@ signing_certificate = "Apple Development"
 team_id = "98D65BEXQ9"
 provisioning_profile = "/Users/kaelin/Library/Developer/Xcode/UserData/Provisioning Profiles/6a9c418e-9d8e-4393-bc8f-f782b7a0b9da"
 export_method = "debugging"
+
+[tool.flet.web]

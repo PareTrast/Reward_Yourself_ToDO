@@ -77,7 +77,7 @@ def main(page: ft.Page):
         )
         page.go("/login")
 
-    def show_register_view(e):
+    def show_register_view(route):
         def register(e):
             if user_manager.register_user(
                 register_username.value, register_password.value
@@ -110,6 +110,12 @@ def main(page: ft.Page):
             )
         )
         page.go("/register")
+
+    def logout():
+        nonlocal todo_list, username
+        todo_list = None
+        username = None
+        page.go("/login")
 
     def show_main_view():
         
@@ -167,8 +173,8 @@ def main(page: ft.Page):
 
         def add_task(e):
             nonlocal selected_due_date
-            if selected_due_date:
-                due_date_str = selected_due_date.strftime("%Y-%m-%d")
+            if task_input.value:
+                due_date_str = selected_due_date.strftime("%Y-%m-%d") if selected_due_date else None
                 todo_list.add_task(task_input.value, due_date_str)
                 task_input.value = ""
                 selected_due_date = None
@@ -176,7 +182,7 @@ def main(page: ft.Page):
                 page.update()
             else:
                 page.snack_bar = ft.SnackBar(
-                    ft.Text("Please select a due date.")
+                    ft.Text("Please enter a task.")
                 )
                 page.snack_bar.open = True
                 page.update()
@@ -217,6 +223,17 @@ def main(page: ft.Page):
                         ft.Container(
                             content=ft.ListView(
                                 controls=[
+                                    ft.Row(
+                                        [
+                                            ft.Text("Reward Yourself", size=30, weight=ft.FontWeight.BOLD),
+                                            ft.IconButton(
+                                                icon=ft.Icons.LOGOUT,
+                                                on_click=lambda _: logout(),
+                                                tooltip="Logout"
+                                            ),
+                                        ],
+                                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                    ),
                                     calendar_container,
                                     ft.Column(
                                         [
@@ -354,7 +371,7 @@ def main(page: ft.Page):
         elif page.route == "/login":
             show_login_view()
         elif page.route == "/register":
-            show_register_view()
+            show_register_view(route)
         page.go(page.route)
 
     def view_pop(view):

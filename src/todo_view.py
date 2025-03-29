@@ -4,9 +4,9 @@ import shutil
 
 class ToDoList:
     def __init__(self, username):
-        db_filename = f"{username}_todo_data.db"
-        self.db_path = os.path.join("users", username, db_filename)
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        db_filename = f"{username}_todo.db"
+        self.db_path = os.path.join("users", db_filename)
+        os.makedirs("users", exist_ok=True)
         self.create_tables()
         self.load_data()
 

@@ -1,5 +1,5 @@
 import flet as ft
-from database import ToDoList
+from todo_view import ToDoList
 
 def reward_view(page: ft.Page, todo_list: ToDoList):
     reward_input = ft.TextField(label="New Reward", expand=True)

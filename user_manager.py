@@ -1,4 +1,20 @@
-import hashlib
+import flet as ft
+from user_storage import FileSystemUserStorage, LocalStorageUserStorage
+
+class UserManager:
+    def __init__(self, page: ft.Page, users_dir="users"):
+        if page.platform in ["android", "ios", "linux", "windows", "macos"]:
+            self.user_storage = FileSystemUserStorage(users_dir)
+        else:
+            self.user_storage = LocalStorageUserStorage(page)
+
+    def register_user(self, username, password):
+        return self.user_storage.register_user(username, password)
+
+    def verify_user(self, username, password):
+        return self.user_storage.verify_user(username, password)
+
+'''import hashlib
 import os
 
 
@@ -27,3 +43,4 @@ class UserManager:
             stored_hash = f.read().decode()
         hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
         return hashed_password == stored_hash
+'''

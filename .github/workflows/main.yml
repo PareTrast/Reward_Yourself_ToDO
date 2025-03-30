@@ -61,6 +61,10 @@ jobs:
     - name: Install Flet
       run: |
         pip install flet
+        
+    - name: Install requirements
+      run: |
+        pip install -r requirements.txt
 
     - name: Flet Build Web
       run: |

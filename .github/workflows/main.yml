@@ -61,6 +61,11 @@ jobs:
     - name: Install Flet
       run: |
         pip install flet
+
+    - name: Install Flet
+      run: |
+        pip install sqlite-devel
+        ./configure --enable-loadable-sqlite-extensions && make && sudo make install
         
     - name: Install requirements
       run: |

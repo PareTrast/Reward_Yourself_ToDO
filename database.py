@@ -2,6 +2,7 @@ import os
 import shutil
 import flet as ft
 import json
+import asyncio  # For non-blocking delays
 
 
 class Storage:
@@ -168,95 +169,102 @@ class LocalStorage(Storage):
     def __init__(self, page: ft.Page, username):
         self.page = page
         self.username = username
-        self.load_data()
+        self.data = {"tasks": [], "rewards": [], "medals": 0}
 
-    def load_data(self):
-        data = self.page.client_storage.get(self.username)
-        print(f"Loaded data for {self.username}: {data}")
-        if data:
-            self.data = json.loads(data)
-        else:
-            self.data = {"tasks": [], "rewards": [], "medals": 0}
-        self.medals = self.data["medals"]
+    async def load_data(self):
+        retries = 5
+        while retries > 0:
+            try:
+                data = self.page.client_storage.get(self.username)
+                if data:
+                    self.data = json.loads(data)
+                else:
+                    self.data = {"tasks": [], "rewards": [], "medals": 0}
+                self.medals = self.data["medals"]
+                return
+            except TimeoutError:
+                retries -= 1
+                await asyncio.sleep(1)  # Use asyncio.sleep for non-blocking delay
+        raise TimeoutError(
+            "Failed to initialize client_storage after multiple retries."
+        )
 
     def save_data(self):
-        print(f"Saving data for {self.username}: {self.data}")
         self.page.client_storage.set(self.username, json.dumps(self.data))
 
-    def create_tables(self):
-        pass  # No tables in localStorage
 
-    def add_task(self, task, due_date=None):
-        self.data["tasks"].append({"task": task, "done": False, "due_date": due_date})
-        self.save_data()
+class IndexedDBStorage(Storage):
+    def __init__(self, db_name, store_name, js):
+        self.js = js  # Store a reference to the js module
+        self.db_name = db_name
+        self.store_name = store_name
+        self.data = {"tasks": [], "rewards": [], "medals": 0}
+        self.init_db()
 
-    def mark_task_done(self, task_id):
-        self.data["tasks"].pop(task_id)
-        self.data["medals"] += 1
-        self.save_data()
+    def init_db(self):
+        """
+        Initialize the IndexedDB database and object store.
+        """
+        request = self.js.window.indexedDB.open(self.db_name, 1)
+        request.onupgradeneeded = lambda event: self._create_store(event)
 
-    def add_reward(self, reward, medal_cost):
-        self.data["rewards"].append({"reward": reward, "medal_cost": medal_cost})
-        self.save_data()
+    def _create_store(self, event):
+        db = event.target.result
+        if not db.objectStoreNames.contains(self.store_name):
+            db.createObjectStore(
+                self.store_name, {"keyPath": "id", "autoIncrement": True}
+            )
 
-    def claim_reward(self, reward_id):
-        reward = self.data["rewards"].pop(reward_id)
-        if self.data["medals"] >= reward["medal_cost"]:
-            self.data["medals"] -= reward["medal_cost"]
-            self.save_data()
-            return True
-        else:
-            self.data["rewards"].append(reward)  # Put reward back
-            self.save_data()
-            return False
+    def load_data(self):
+        """
+        Load data from IndexedDB.
+        """
+        db_request = self.js.window.indexedDB.open(self.db_name)
+        db_request.onsuccess = lambda event: self._load_from_store(event)
 
-    def get_tasks(self, due_date=None):
-        if due_date:
-            return [
-                (index, task["task"], task["done"], task.get("due_date"))
-                for index, task in enumerate(self.data["tasks"])
-                if task.get("due_date") == due_date
-            ]
-        return [
-            (index, task["task"], task["done"], task.get("due_date"))
-            for index, task in enumerate(self.data["tasks"])
-        ]
+    def _load_from_store(self, event):
+        db = event.target.result
+        transaction = db.transaction(self.store_name, "readonly")
+        store = transaction.objectStore(self.store_name)
+        get_request = store.get(1)  # Assuming a single record with ID 1
+        get_request.onsuccess = lambda event: self._set_data(event)
 
-    def get_tasks_by_date_range(self, start_date, end_date):
-        return [
-            task
-            for task in self.data["tasks"]
-            if start_date <= task["due_date"] <= end_date
-        ]
+    def _set_data(self, event):
+        result = event.target.result
+        if result:
+            self.data = json.loads(result)
 
-    def get_rewards(self):
-        return self.data["rewards"]
+    def save_data(self):
+        """
+        Save data to IndexedDB.
+        """
+        db_request = self.js.window.indexedDB.open(self.db_name)
+        db_request.onsuccess = lambda event: self._save_to_store(event)
 
-    def export_data(self, export_path):
-        with open(export_path, "w") as f:
-            json.dump(self.data, f)
-
-    def import_data(self, import_path):
-        try:
-            with open(import_path, "r") as f:
-                self.data = json.load(f)
-            self.save_data()
-        except FileNotFoundError:
-            print(f"File not found: {import_path}")
-        except json.JSONDecodeError:
-            print(f"Invalid JSON format in file: {import_path}")
+    def _save_to_store(self, event):
+        db = event.target.result
+        transaction = db.transaction(self.store_name, "readwrite")
+        store = transaction.objectStore(self.store_name)
+        store.put(self.data)
 
 
 def get_storage(page, username):
     """
     Factory function to initialize the appropriate storage backend.
-    Uses LocalStorage if running in a web browser, otherwise uses SQLiteStorage.
+    Uses IndexedDB for web platforms and SQLiteStorage for non-web platforms.
     """
     if page.web:  # Check if the app is running in a web browser
-        print("Running in a web browser. Using LocalStorage.")
-        return LocalStorage(page, username)
-    else:
-        print("Running on a non-web platform. Using SQLiteStorage.")
-        import sqlite3  # Import sqlite3 only when needed
+        print("Running in a web browser. Using IndexedDB for storage.")
+        try:
+            import js  # Import js only when running in a browser
 
+            return IndexedDBStorage(
+                db_name="RewardYourselfDB", store_name="UserData", js=js
+            )
+        except ModuleNotFoundError:
+            raise RuntimeError(
+                "The 'js' module is only available in a browser environment."
+            )
+    else:
+        print("Running on a non-web platform. Using SQLiteStorage for storage.")
         return SQLiteStorage(username)

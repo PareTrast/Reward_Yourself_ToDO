@@ -390,4 +390,4 @@ def main(page: ft.Page):
         route_change(page.route)
     else:
         show_login_view()
-ft.app(target=main, assets_dir="assets")
+ft.app(target=main, export_asgi_app=True)

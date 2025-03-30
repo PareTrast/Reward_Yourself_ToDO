@@ -9,7 +9,8 @@ authors = [
 ]
 dependencies = [
   "flet==0.27.5",
-  "arrow"
+  "arrow",
+  "sqlite3"
 ]
 
 [tool.flet]
@@ -52,9 +53,7 @@ provisioning_profile = "/Users/kaelin/Library/Developer/Xcode/UserData/Provision
 export_method = "development"
 
 [tool.flet.web]
-# Web-specific settings
-web_renderer = "html"  # Use HTML renderer for better mobile compatibility
-assets_dir = "assets"
-python_path = "src"  # Add this line to specify where Python modules are located
+renderer = "html"
+route_url_strategy = "hash"
 
 

@@ -3,6 +3,7 @@ import shutil
 import flet as ft
 import json
 import asyncio  # For non-blocking delays
+import js  # type: ignore # Pyodide's JavaScript interop module
 
 
 class Storage:
@@ -248,23 +249,69 @@ class IndexedDBStorage(Storage):
         store.put(self.data)
 
 
+class SQLJSStorage(Storage):
+    def __init__(self, db_name="RewardYourselfDB"):
+        self.db_name = db_name
+        self.db = None
+        self.init_db()
+
+    def init_db(self):
+        """
+        Dynamically load sql.js and initialize the SQLite database.
+        """
+        # Dynamically load sql.js from a CDN
+        if not hasattr(js.window, "initSqlJs"):
+            js_code = """
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js';
+            script.onload = () => console.log('sql.js loaded');
+            document.head.appendChild(script);
+            """
+            js.eval(js_code)
+
+        # Wait for sql.js to load
+        while not hasattr(js.window, "initSqlJs"):
+            pass  # Busy wait until sql.js is available
+
+        # Initialize the SQLite database
+        sql_js = js.window.initSqlJs()
+        self.db = sql_js.Database()
+
+        # Create tables if they don't exist
+        self.db.run(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task TEXT,
+                done INTEGER,
+                due_date TEXT NULL
+            );
+        """
+        )
+        self.db.run(
+            """
+            CREATE TABLE IF NOT EXISTS rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reward TEXT,
+                medal_cost INTEGER
+            );
+        """
+        )
+        self.db.run(
+            """
+            CREATE TABLE IF NOT EXISTS medals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                count INTEGER
+            );
+        """
+        )
+        self.db.run("INSERT OR IGNORE INTO medals (count) VALUES (0);")
+
+
 def get_storage(page, username):
     """
-    Factory function to initialize the appropriate storage backend.
-    Uses IndexedDB for web platforms and SQLiteStorage for non-web platforms.
+    Factory function to initialize the storage backend.
+    Always uses SQLJSStorage for both web and non-web platforms.
     """
-    if page.web:  # Check if the app is running in a web browser
-        print("Running in a web browser. Using IndexedDB for storage.")
-        try:
-            import js  # Import js only when running in a browser
-
-            return IndexedDBStorage(
-                db_name="RewardYourselfDB", store_name="UserData", js=js
-            )
-        except ModuleNotFoundError:
-            raise RuntimeError(
-                "The 'js' module is only available in a browser environment."
-            )
-    else:
-        print("Running on a non-web platform. Using SQLiteStorage for storage.")
-        return SQLiteStorage(username)
+    print("Using SQLJSStorage for storage.")
+    return SQLJSStorage()

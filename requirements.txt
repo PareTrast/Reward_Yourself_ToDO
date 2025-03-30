@@ -1,2 +1,4 @@
 flet
 arrow 
+supabase
+python-dotenv

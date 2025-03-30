@@ -136,10 +136,16 @@ def main(page: ft.Page):
             task_list.controls.clear()
             if todo_list:
                 tasks = todo_list.get_tasks()
-                for task_id, task, done, due_date in tasks:
+                for task in tasks:
+                    task_id = task["id"]
+                    task_name = task["task"]
+                    done = task["done"]
+                    due_date = task.get(
+                        "due_date", "None"
+                    )  # Use "None" if due_date is missing
                     task_list.controls.append(
                         ft.Checkbox(
-                            label=f"{task} (Due: {due_date if due_date else 'None'})",
+                            label=f"{task_name} (Due: {due_date})",
                             value=done,
                             on_change=lambda e, task_id=task_id: mark_done(task_id),
                         )
@@ -150,10 +156,13 @@ def main(page: ft.Page):
             reward_list.controls.clear()
             if todo_list:
                 rewards = todo_list.get_rewards()
-                for reward_id, reward, cost in rewards:
+                for reward in rewards:
+                    reward_id = reward["id"]
+                    reward_name = reward["reward"]
+                    cost = reward["medal_cost"]
                     reward_list.controls.append(
                         ft.Checkbox(
-                            label=f"{reward} - {cost} medals",
+                            label=f"{reward_name} - {cost} medals",
                             value=False,
                             on_change=lambda e, reward_id=reward_id: claim_reward(
                                 reward_id

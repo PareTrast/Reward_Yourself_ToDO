@@ -1,6 +1,7 @@
 import flet as ft
 from todo_view import ToDoList
 
+
 def reward_view(page: ft.Page, todo_list: ToDoList):
     reward_input = ft.TextField(label="New Reward", expand=True)
     medal_cost_input = ft.TextField(
@@ -13,10 +14,16 @@ def reward_view(page: ft.Page, todo_list: ToDoList):
         reward_list.controls.clear()
         if todo_list:
             rewards = todo_list.get_rewards()
-            for reward_id, reward, cost in rewards:
+            print(rewards)  # Debug: Print the structure of rewards
+            for reward in rewards:
+                print(reward)  # Debug: Print each reward
+                # Adjust unpacking based on the structure of `reward`
+                reward_id = reward["id"]
+                reward_name = reward["reward"]
+                cost = reward["medal_cost"]
                 reward_list.controls.append(
                     ft.Checkbox(
-                        label=f"{reward} - {cost} medals",
+                        label=f"{reward_name} - {cost} medals",
                         value=False,
                         on_change=lambda e, reward_id=reward_id: claim_reward(
                             reward_id

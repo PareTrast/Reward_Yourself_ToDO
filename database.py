@@ -1,10 +1,9 @@
 import os
 import shutil
-import flet as ft
-import json
-import asyncio  # For non-blocking delays
+from supabase import create_client, Client
+from dotenv import load_dotenv
 
-# import js  # Pyodide's JavaScript interop module
+load_dotenv()
 
 
 class Storage:
@@ -42,226 +41,153 @@ class Storage:
         raise NotImplementedError
 
 
-class SQLiteStorage(Storage):
-    def __init__(self, username):
-        import sqlite3
-
-        print("Sqlite imported")
-        db_filename = f"{username}_todo.db"
-        self.db_path = os.path.join("users", username, db_filename)
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
-        self.cursor = self.conn.cursor()
-        self.create_tables()
-
-    def create_tables(self):
-        self.cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task TEXT,
-                done INTEGER,
-                due_date TEXT NULL
-            )
-        """
-        )
-        self.cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rewards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                reward TEXT,
-                medal_cost INTEGER
-            )
-        """
-        )
-        self.cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS medals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                count INTEGER
-            )
-        """
-        )
-        self.cursor.execute("INSERT OR IGNORE INTO medals (count) VALUES (0)")
-        self.conn.commit()
-
-    def load_data(self):
-        self.cursor.execute("SELECT count FROM medals LIMIT 1")
-        result = self.cursor.fetchone()
-        self.medals = result[0] if result else 0  # Ensure medals is always defined
-
-    def add_task(self, task, due_date=None):
-        due_date = due_date or None
-        self.cursor.execute(
-            "INSERT INTO tasks (task, done, due_date) VALUES (?, ?, ?)",
-            (task, 0, due_date),
-        )
-        self.conn.commit()
-
-    def mark_task_done(self, task_id):
-        self.cursor.execute("UPDATE medals SET count = count + 1")
-        self.cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        self.conn.commit()
-        self.load_data()
-
-    def add_reward(self, reward, medal_cost):
-        self.cursor.execute(
-            "INSERT INTO rewards (reward, medal_cost) VALUES (?, ?)",
-            (reward, medal_cost),
-        )
-        self.conn.commit()
-
-    def claim_reward(self, reward_id):
-        self.cursor.execute(
-            "SELECT reward, medal_cost FROM rewards WHERE id = ?", (reward_id,)
-        )
-        result = self.cursor.fetchone()
-        if result:
-            reward, medal_cost = result
-            if self.medals >= medal_cost:
-                self.cursor.execute(
-                    "UPDATE medals SET count = count - ?", (medal_cost,)
-                )
-                self.cursor.execute("DELETE FROM rewards WHERE id = ?", (reward_id,))
-                self.conn.commit()
-                self.load_data()
-                return True
-            else:
-                return False
-        else:
-            return None
-
-    def get_tasks(self, due_date=None):
-        if due_date:
-            self.cursor.execute(
-                "SELECT id, task, done, due_date FROM tasks WHERE due_date = ?",
-                (due_date,),
-            )
-        else:
-            self.cursor.execute("SELECT id, task, done, due_date FROM tasks")
-        # Ensure all rows include 4 values (id, task, done, due_date)
-        return [
-            (row[0], row[1], row[2], row[3] if row[3] else None)
-            for row in self.cursor.fetchall()
-        ]
-
-    def get_tasks_by_date_range(self, start_date, end_date):
-        self.cursor.execute(
-            "SELECT id, task, done, due_date FROM tasks WHERE due_date BETWEEN ? AND ?",
-            (start_date, end_date),
-        )
-        return self.cursor.fetchall()
-
-    def get_rewards(self):
-        self.cursor.execute("SELECT id, reward, medal_cost FROM rewards")
-        return self.cursor.fetchall()
-
-    def export_data(self, export_path):
-        shutil.copy(self.db_path, export_path)
-
-    def import_data(self, import_path):
-        shutil.copy(import_path, self.db_path)
-        self.load_data()
-
-    def close(self):
-        self.conn.close()
-
-
-class LocalStorage(Storage):
-    def __init__(self, page: ft.Page, username):
-        self.page = page
+class SupabaseStorage(Storage):
+    def __init__(self, api_url, api_key, username):
+        self.supabase: Client = create_client(api_url, api_key)
         self.username = username
         self.data = {"tasks": [], "rewards": [], "medals": 0}
         self.medals = 0  # Initialize medals to 0
+        self.load_data()
 
-    async def load_data(self):
+    def load_data(self):
         """
-        Load data from the browser's localStorage.
+        Load tasks, rewards, and medals from Supabase.
         """
-        if not self.page.web:
-            print("Error: Attempted to use LocalStorage in a non-web environment.")
-            return
+        # Load medals
+        response = (
+            self.supabase.table("medals")
+            .select("count")
+            .eq("username", self.username)
+            .execute()
+        )
+        if response.data:
+            self.data["medals"] = response.data[0]["count"]
+            self.medals = self.data["medals"]  # Sync medals attribute
+        else:
+            # Initialize medals for the user if not present
+            self.supabase.table("medals").insert(
+                {"username": self.username, "count": 0}
+            ).execute()
+            self.data["medals"] = 0
+            self.medals = 0
 
-        try:
-            # Import js only when needed
-            import js
+        # Load tasks
+        response = (
+            self.supabase.table("tasks")
+            .select("*")
+            .eq("username", self.username)
+            .execute()
+        )
+        self.data["tasks"] = response.data if response.data else []
 
-            # Access localStorage using Pyodide's js module
-            data = js.window.localStorage.getItem(self.username)
-            if data:
-                self.data = json.loads(data)
-            else:
-                self.data = {"tasks": [], "rewards": [], "medals": 0}
-            self.medals = self.data["medals"]
-        except Exception as e:
-            print(f"Error loading data: {e}")
-            self.data = {"tasks": [], "rewards": [], "medals": 0}
+        # Load rewards
+        response = (
+            self.supabase.table("rewards")
+            .select("*")
+            .eq("username", self.username)
+            .execute()
+        )
+        self.data["rewards"] = response.data if response.data else []
 
-    def save_data(self):
+    def save_medals(self):
         """
-        Save data to the browser's localStorage.
+        Save medals count to Supabase.
         """
-        if not self.page.web:
-            print("Error: Attempted to use LocalStorage in a non-web environment.")
-            return
-
-        try:
-            # Import js only when needed
-            import js
-
-            # Save data to localStorage using Pyodide's js module
-            js.window.localStorage.setItem(self.username, json.dumps(self.data))
-        except Exception as e:
-            print(f"Error saving data: {e}")
+        self.supabase.table("medals").update({"count": self.data["medals"]}).eq(
+            "username", self.username
+        ).execute()
 
     def add_task(self, task, due_date=None):
-        self.data["tasks"].append({"task": task, "done": False, "due_date": due_date})
-        self.save_data()
+        """
+        Add a new task to Supabase.
+        """
+        self.supabase.table("tasks").insert(
+            {
+                "username": self.username,
+                "task": task,
+                "done": False,
+                "due_date": due_date,
+            }
+        ).execute()
 
     def mark_task_done(self, task_id):
-        self.data["tasks"].pop(task_id)
+        """
+        Mark a task as done and increment medals count.
+        """
+        self.supabase.table("tasks").delete().eq("id", task_id).execute()
         self.data["medals"] += 1
-        self.save_data()
+        self.medals = self.data["medals"]  # Sync medals attribute
+        self.save_medals()
 
     def add_reward(self, reward, medal_cost):
-        self.data["rewards"].append({"reward": reward, "medal_cost": medal_cost})
-        self.save_data()
+        """
+        Add a new reward to Supabase.
+        """
+        self.supabase.table("rewards").insert(
+            {"username": self.username, "reward": reward, "medal_cost": medal_cost}
+        ).execute()
 
     def claim_reward(self, reward_id):
-        reward = self.data["rewards"].pop(reward_id)
-        if self.data["medals"] >= reward["medal_cost"]:
-            self.data["medals"] -= reward["medal_cost"]
-            self.save_data()
-            return True
-        else:
-            self.data["rewards"].append(reward)  # Put reward back
-            self.save_data()
-            return False
+        """
+        Claim a reward if the user has enough medals.
+        """
+        response = (
+            self.supabase.table("rewards").select("*").eq("id", reward_id).execute()
+        )
+        if response.data:
+            reward = response.data[0]
+            if self.data["medals"] >= reward["medal_cost"]:
+                self.data["medals"] -= reward["medal_cost"]
+                self.medals = self.data["medals"]  # Sync medals attribute
+                self.save_medals()
+                self.supabase.table("rewards").delete().eq("id", reward_id).execute()
+                return True
+        return False
 
     def get_tasks(self, due_date=None):
+        """
+        Retrieve tasks from Supabase.
+        """
         if due_date:
-            return [
-                (index, task["task"], task["done"], task.get("due_date"))
-                for index, task in enumerate(self.data["tasks"])
-                if task.get("due_date") == due_date
-            ]
-        return [
-            (index, task["task"], task["done"], task.get("due_date"))
-            for index, task in enumerate(self.data["tasks"])
-        ]
+            response = (
+                self.supabase.table("tasks")
+                .select("*")
+                .eq("username", self.username)
+                .eq("due_date", due_date)
+                .execute()
+            )
+        else:
+            response = (
+                self.supabase.table("tasks")
+                .select("*")
+                .eq("username", self.username)
+                .execute()
+            )
+        return response.data
 
     def get_rewards(self):
-        return self.data["rewards"]
+        """
+        Retrieve rewards from Supabase.
+        """
+        response = (
+            self.supabase.table("rewards")
+            .select("*")
+            .eq("username", self.username)
+            .execute()
+        )
+        return response.data  # Ensure this returns a list of dictionaries
 
 
 def get_storage(page, username):
     """
     Factory function to initialize the appropriate storage backend.
-    Uses LocalStorage for web platforms and SQLiteStorage for non-web platforms.
+    Uses Supabase for both web and non-web platforms.
     """
-    if page.web:  # Check if the app is running in a web browser
-        print("Running in a web browser. Using LocalStorage for storage.")
-        return LocalStorage(page, username)
-    else:
-        print("Running on a non-web platform. Using SQLiteStorage for storage.")
-        return SQLiteStorage(username)
+    print("Using Supabase for storage.")
+    api_url = os.getenv("SUPABASE_API_URL")  # Use environment variables for security
+    api_key = os.getenv("SUPABASE_API_KEY")
+    if not api_url or not api_key:
+        raise RuntimeError(
+            "Supabase API URL or API Key is not set in environment variables."
+        )
+    return SupabaseStorage(api_url, api_key, username)

@@ -66,6 +66,10 @@ jobs:
       run: |
         pip install -r requirements.txt
 
+    - name: Install sqlite3 lib
+      run: |
+        pip install libsqlite3-dev
+
     - name: Flet Build Web
       run: |
         echo "GITHUB_REPOSITORY: ${GITHUB_REPOSITORY}, USER: ${GITHUB_REPOSITORY%/*}, PROJECT_BASE_URL: ${GITHUB_REPOSITORY#*/}"

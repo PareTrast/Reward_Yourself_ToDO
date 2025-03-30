@@ -63,32 +63,20 @@ jobs:
       run: |
         pip install flet
 
-    name: 'Setup SQLite environment'
-description: 'This action will setup the SQLite distribution'
-author: 'Claudio Corsi'
-inputs:
-  sqlite-version:  # id of input
-    description: 'The version of SQLite that you want to install, example, 3.40.0'
-    required: false
-  sqlite-year: # id of input
-    description: 'The year that the SQLite version was released, example, 2022'
-    required: false
-  sqlite-url-path:
-    description: 'The url prefix to the SQLite download site without the year and version information, for example, https://www.sqlite.org/'
-    required: false
-    default: 'https://www.sqlite.org/'
-  sqlite-retry-count:
-    description: 'The retry count for github rest api calls, default 3.  Relevant when not defining version/year input combinations.'
-    required: false
-    default: '3'
-outputs:
-  cache-hit:
-    description: 'A boolean value to indicate if a cache was hit'
-  sqlite-version:
-    description: 'The installed SQLite version'
-runs:
-  using: 'node16' # can this be node18
-  main: 'dist/index.js' # installs the requested sqlite version
+    - name: Setup SQLite environment
+  # You may pin to the exact commit or the version.
+  # uses: ccorsi/setup-sqlite@6c698cb179200294b5511fd54155bbdd442a3340
+      uses: ccorsi/setup-sqlite@v1.2.1
+      with:
+    # The version of SQLite that you want to install, example, 3.40.0
+        sqlite-version: 3.40.0 # optional
+        # The year that the SQLite version was released, example, 2022
+        sqlite-year: 2022 # optional
+        # The url prefix to the SQLite download site without the year and version information, for example, https://www.sqlite.org/
+        sqlite-url-path: https://www.sqlite.org/ # optional, default is https://www.sqlite.org/
+        # The retry count for github rest api calls, default 3.  Relevant when not defining version/year input combinations.
+        sqlite-retry-count: 3 # optional, default is 3
+          
       
 
         

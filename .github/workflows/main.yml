@@ -61,10 +61,6 @@ jobs:
     - name: Install Flet
       run: |
         pip install flet
-
-    - name: Install sqlite3
-      run: |
-        pip install sqlite3
         
     - name: Install requirements
       run: |

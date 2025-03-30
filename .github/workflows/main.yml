@@ -63,6 +63,10 @@ jobs:
       run: |
         pip install flet
 
+    - name: Install sqlite3 libs
+      run: |
+        sudo apt-get install libsqlite3-dev
+
     - name: Setup SQLite environment
   # You may pin to the exact commit or the version.
   # uses: ccorsi/setup-sqlite@6c698cb179200294b5511fd54155bbdd442a3340

@@ -3,7 +3,6 @@ import shutil
 import flet as ft
 import json
 import asyncio  # For non-blocking delays
-import js  # type: ignore # Pyodide's JavaScript interop module
 
 
 class Storage:
@@ -171,8 +170,12 @@ class LocalStorage(Storage):
         self.page = page
         self.username = username
         self.data = {"tasks": [], "rewards": [], "medals": 0}
+        self.medals = 0  # Initialize medals to 0
 
     async def load_data(self):
+        """
+        Load data from localStorage.
+        """
         retries = 5
         while retries > 0:
             try:
@@ -191,121 +194,52 @@ class LocalStorage(Storage):
         )
 
     def save_data(self):
-        self.page.client_storage.set(self.username, json.dumps(self.data))
-
-
-class IndexedDBStorage(Storage):
-    def __init__(self, db_name, store_name, js):
-        self.js = js  # Store a reference to the js module
-        self.db_name = db_name
-        self.store_name = store_name
-        self.data = {"tasks": [], "rewards": [], "medals": 0}
-        self.init_db()
-
-    def init_db(self):
         """
-        Initialize the IndexedDB database and object store.
+        Save data to localStorage.
         """
-        request = self.js.window.indexedDB.open(self.db_name, 1)
-        request.onupgradeneeded = lambda event: self._create_store(event)
+        try:
+            self.page.client_storage.set(self.username, json.dumps(self.data))
+        except Exception as e:
+            print(f"Error saving data: {e}")
 
-    def _create_store(self, event):
-        db = event.target.result
-        if not db.objectStoreNames.contains(self.store_name):
-            db.createObjectStore(
-                self.store_name, {"keyPath": "id", "autoIncrement": True}
-            )
+    def add_task(self, task, due_date=None):
+        self.data["tasks"].append({"task": task, "done": False, "due_date": due_date})
+        self.save_data()
 
-    def load_data(self):
-        """
-        Load data from IndexedDB.
-        """
-        db_request = self.js.window.indexedDB.open(self.db_name)
-        db_request.onsuccess = lambda event: self._load_from_store(event)
+    def mark_task_done(self, task_id):
+        self.data["tasks"].pop(task_id)
+        self.data["medals"] += 1
+        self.save_data()
 
-    def _load_from_store(self, event):
-        db = event.target.result
-        transaction = db.transaction(self.store_name, "readonly")
-        store = transaction.objectStore(self.store_name)
-        get_request = store.get(1)  # Assuming a single record with ID 1
-        get_request.onsuccess = lambda event: self._set_data(event)
+    def add_reward(self, reward, medal_cost):
+        self.data["rewards"].append({"reward": reward, "medal_cost": medal_cost})
+        self.save_data()
 
-    def _set_data(self, event):
-        result = event.target.result
-        if result:
-            self.data = json.loads(result)
+    def claim_reward(self, reward_id):
+        reward = self.data["rewards"].pop(reward_id)
+        if self.data["medals"] >= reward["medal_cost"]:
+            self.data["medals"] -= reward["medal_cost"]
+            self.save_data()
+            return True
+        else:
+            self.data["rewards"].append(reward)  # Put reward back
+            self.save_data()
+            return False
 
-    def save_data(self):
-        """
-        Save data to IndexedDB.
-        """
-        db_request = self.js.window.indexedDB.open(self.db_name)
-        db_request.onsuccess = lambda event: self._save_to_store(event)
+    def get_tasks(self, due_date=None):
+        if due_date:
+            return [
+                (index, task["task"], task["done"], task.get("due_date"))
+                for index, task in enumerate(self.data["tasks"])
+                if task.get("due_date") == due_date
+            ]
+        return [
+            (index, task["task"], task["done"], task.get("due_date"))
+            for index, task in enumerate(self.data["tasks"])
+        ]
 
-    def _save_to_store(self, event):
-        db = event.target.result
-        transaction = db.transaction(self.store_name, "readwrite")
-        store = transaction.objectStore(self.store_name)
-        store.put(self.data)
-
-
-class SQLJSStorage(Storage):
-    def __init__(self, db_name="RewardYourselfDB"):
-        self.db_name = db_name
-        self.db = None
-        self.init_db()
-
-    def init_db(self):
-        """
-        Dynamically load sql.js and initialize the SQLite database.
-        """
-        # Dynamically load sql.js from a CDN
-        if not hasattr(js.window, "initSqlJs"):
-            js_code = """
-            const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js';
-            script.onload = () => console.log('sql.js loaded');
-            document.head.appendChild(script);
-            """
-            js.eval(js_code)
-
-        # Wait for sql.js to load
-        while not hasattr(js.window, "initSqlJs"):
-            pass  # Busy wait until sql.js is available
-
-        # Initialize the SQLite database
-        sql_js = js.window.initSqlJs()
-        self.db = sql_js.Database()
-
-        # Create tables if they don't exist
-        self.db.run(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task TEXT,
-                done INTEGER,
-                due_date TEXT NULL
-            );
-        """
-        )
-        self.db.run(
-            """
-            CREATE TABLE IF NOT EXISTS rewards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                reward TEXT,
-                medal_cost INTEGER
-            );
-        """
-        )
-        self.db.run(
-            """
-            CREATE TABLE IF NOT EXISTS medals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                count INTEGER
-            );
-        """
-        )
-        self.db.run("INSERT OR IGNORE INTO medals (count) VALUES (0);")
+    def get_rewards(self):
+        return self.data["rewards"]
 
 
 def get_storage(page, username):

@@ -310,8 +310,12 @@ class SQLJSStorage(Storage):
 
 def get_storage(page, username):
     """
-    Factory function to initialize the storage backend.
-    Always uses SQLJSStorage for both web and non-web platforms.
+    Factory function to initialize the appropriate storage backend.
+    Uses LocalStorage for web platforms and SQLiteStorage for non-web platforms.
     """
-    print("Using SQLJSStorage for storage.")
-    return SQLJSStorage()
+    if page.web:  # Check if the app is running in a web browser
+        print("Running in a web browser. Using LocalStorage for storage.")
+        return LocalStorage(page, username)
+    else:
+        print("Running on a non-web platform. Using SQLiteStorage for storage.")
+        return SQLiteStorage(username)

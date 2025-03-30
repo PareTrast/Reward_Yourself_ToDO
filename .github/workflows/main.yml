@@ -68,6 +68,10 @@ jobs:
       
     - name: Setup Latest SQLite Version
       uses: actions/setup-sqlite@v1
+      with:
+        sqlite-version: 3.40.0
+        sqlite-year: 2022
+        sqlite-url-path: https://www.sqlite.org/
       
 
         

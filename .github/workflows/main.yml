@@ -66,9 +66,6 @@ jobs:
       run: |
         pip install -r requirements.txt
 
-    - name: Install sqlite3 lib
-      run: |
-        pip install libsqlite3-dev
 
     - name: Flet Build Web
       run: |

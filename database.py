@@ -1,9 +1,7 @@
-import sqlite3
 import os
 import shutil
 import flet as ft
 import json
-
 
 
 class Storage:
@@ -40,8 +38,12 @@ class Storage:
     def import_data(self, import_path):
         raise NotImplementedError
 
+
 class SQLiteStorage(Storage):
     def __init__(self, username):
+        import sqlite3
+
+        print("Sqlite imported")
         db_filename = f"{username}_todo.db"
         self.db_path = os.path.join("users", username, db_filename)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -83,11 +85,14 @@ class SQLiteStorage(Storage):
     def load_data(self):
         self.cursor.execute("SELECT count FROM medals LIMIT 1")
         result = self.cursor.fetchone()
-        self.medals = result[0] if result else 0
+        self.medals = result[0] if result else 0  # Ensure medals is always defined
 
     def add_task(self, task, due_date=None):
         due_date = due_date or None
-        self.cursor.execute("INSERT INTO tasks (task, done, due_date) VALUES (?, ?, ?)", (task, 0, due_date))
+        self.cursor.execute(
+            "INSERT INTO tasks (task, done, due_date) VALUES (?, ?, ?)",
+            (task, 0, due_date),
+        )
         self.conn.commit()
 
     def mark_task_done(self, task_id):
@@ -111,7 +116,9 @@ class SQLiteStorage(Storage):
         if result:
             reward, medal_cost = result
             if self.medals >= medal_cost:
-                self.cursor.execute("UPDATE medals SET count = count - ?", (medal_cost,))
+                self.cursor.execute(
+                    "UPDATE medals SET count = count - ?", (medal_cost,)
+                )
                 self.cursor.execute("DELETE FROM rewards WHERE id = ?", (reward_id,))
                 self.conn.commit()
                 self.load_data()
@@ -123,10 +130,17 @@ class SQLiteStorage(Storage):
 
     def get_tasks(self, due_date=None):
         if due_date:
-            self.cursor.execute("SELECT id, task, done, due_date FROM tasks WHERE due_date = ?", (due_date,))
+            self.cursor.execute(
+                "SELECT id, task, done, due_date FROM tasks WHERE due_date = ?",
+                (due_date,),
+            )
         else:
             self.cursor.execute("SELECT id, task, done, due_date FROM tasks")
-        return self.cursor.fetchall()
+        # Ensure all rows include 4 values (id, task, done, due_date)
+        return [
+            (row[0], row[1], row[2], row[3] if row[3] else None)
+            for row in self.cursor.fetchall()
+        ]
 
     def get_tasks_by_date_range(self, start_date, end_date):
         self.cursor.execute(
@@ -149,6 +163,7 @@ class SQLiteStorage(Storage):
     def close(self):
         self.conn.close()
 
+
 class LocalStorage(Storage):
     def __init__(self, page: ft.Page, username):
         self.page = page
@@ -157,12 +172,15 @@ class LocalStorage(Storage):
 
     def load_data(self):
         data = self.page.client_storage.get(self.username)
+        print(f"Loaded data for {self.username}: {data}")
         if data:
             self.data = json.loads(data)
         else:
             self.data = {"tasks": [], "rewards": [], "medals": 0}
+        self.medals = self.data["medals"]
 
     def save_data(self):
+        print(f"Saving data for {self.username}: {self.data}")
         self.page.client_storage.set(self.username, json.dumps(self.data))
 
     def create_tables(self):
@@ -191,14 +209,25 @@ class LocalStorage(Storage):
             self.data["rewards"].append(reward)  # Put reward back
             self.save_data()
             return False
-        
+
     def get_tasks(self, due_date=None):
         if due_date:
-            return [task for task in self.data["tasks"] if task["due_date"] == due_date]
-        return self.data["tasks"]
-    
+            return [
+                (index, task["task"], task["done"], task.get("due_date"))
+                for index, task in enumerate(self.data["tasks"])
+                if task.get("due_date") == due_date
+            ]
+        return [
+            (index, task["task"], task["done"], task.get("due_date"))
+            for index, task in enumerate(self.data["tasks"])
+        ]
+
     def get_tasks_by_date_range(self, start_date, end_date):
-        return [task for task in self.data["tasks"] if start_date <= task["due_date"] <= end_date]
+        return [
+            task
+            for task in self.data["tasks"]
+            if start_date <= task["due_date"] <= end_date
+        ]
 
     def get_rewards(self):
         return self.data["rewards"]
@@ -213,5 +242,21 @@ class LocalStorage(Storage):
                 self.data = json.load(f)
             self.save_data()
         except FileNotFoundError:
-            pass
+            print(f"File not found: {import_path}")
+        except json.JSONDecodeError:
+            print(f"Invalid JSON format in file: {import_path}")
 
+
+def get_storage(page, username):
+    """
+    Factory function to initialize the appropriate storage backend.
+    Uses LocalStorage if running in a web browser, otherwise uses SQLiteStorage.
+    """
+    if page.web:  # Check if the app is running in a web browser
+        print("Running in a web browser. Using LocalStorage.")
+        return LocalStorage(page, username)
+    else:
+        print("Running on a non-web platform. Using SQLiteStorage.")
+        import sqlite3  # Import sqlite3 only when needed
+
+        return SQLiteStorage(username)

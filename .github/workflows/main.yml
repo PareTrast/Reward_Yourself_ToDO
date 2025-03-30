@@ -47,6 +47,7 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      
 
     - name: Setup Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v2
@@ -63,10 +64,11 @@ jobs:
         pip install flet
 
     - name: Setup SQLite v3.40.0
+      uses: actions/checkout@v4
+      
+    - name: Setup Latest SQLite Version
       uses: actions/setup-sqlite@v1
-      with:
-          sqlite-version: 3.40.0
-          sqlite-year: 2022
+      
 
         
     - name: Install requirements

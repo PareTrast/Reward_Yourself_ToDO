@@ -9,7 +9,7 @@ authors = [
 ]
 dependencies = [
   "flet==0.27.5",
-  "arrow",
+  "arrow"
   
 ]
 

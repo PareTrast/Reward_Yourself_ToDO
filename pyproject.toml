@@ -10,7 +10,7 @@ authors = [
 dependencies = [
   "flet==0.27.5",
   "arrow",
-  "sqlite3"
+  
 ]
 
 [tool.flet]
@@ -23,7 +23,7 @@ org = "com.mycompany"
 product = "reward-yourself"
 
 # company name to display in about app dialogs
-company = "Flet"
+company = "Weekend Grind"
 
 # copyright text to display in about app dialogs
 copyright = "Copyright (C) 2025 by Flet"
@@ -45,15 +45,6 @@ flet = {extras = ["all"], version = "0.27.5"}
 arrow = "*"
 
 
-[tool.flet.ios]
-bundle_id = "com.weekendgrind.reward-yourself-todo"
-signing_certificate = "Apple Development"
-team_id = "98D65BEXQ9"
-provisioning_profile = "/Users/kaelin/Library/Developer/Xcode/UserData/Provisioning Profiles/6a9c418e-9d8e-4393-bc8f-f782b7a0b9da"
-export_method = "development"
 
-[tool.flet.web]
-renderer = "html"
-route_url_strategy = "hash"
 
 

@@ -4,6 +4,8 @@ import flet as ft
 import json
 import asyncio  # For non-blocking delays
 
+# import js  # Pyodide's JavaScript interop module
+
 
 class Storage:
     def create_tables(self):
@@ -174,31 +176,41 @@ class LocalStorage(Storage):
 
     async def load_data(self):
         """
-        Load data from localStorage.
+        Load data from the browser's localStorage.
         """
-        retries = 5
-        while retries > 0:
-            try:
-                data = self.page.client_storage.get(self.username)
-                if data:
-                    self.data = json.loads(data)
-                else:
-                    self.data = {"tasks": [], "rewards": [], "medals": 0}
-                self.medals = self.data["medals"]
-                return
-            except TimeoutError:
-                retries -= 1
-                await asyncio.sleep(1)  # Use asyncio.sleep for non-blocking delay
-        raise TimeoutError(
-            "Failed to initialize client_storage after multiple retries."
-        )
+        if not self.page.web:
+            print("Error: Attempted to use LocalStorage in a non-web environment.")
+            return
+
+        try:
+            # Import js only when needed
+            import js
+
+            # Access localStorage using Pyodide's js module
+            data = js.window.localStorage.getItem(self.username)
+            if data:
+                self.data = json.loads(data)
+            else:
+                self.data = {"tasks": [], "rewards": [], "medals": 0}
+            self.medals = self.data["medals"]
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            self.data = {"tasks": [], "rewards": [], "medals": 0}
 
     def save_data(self):
         """
-        Save data to localStorage.
+        Save data to the browser's localStorage.
         """
+        if not self.page.web:
+            print("Error: Attempted to use LocalStorage in a non-web environment.")
+            return
+
         try:
-            self.page.client_storage.set(self.username, json.dumps(self.data))
+            # Import js only when needed
+            import js
+
+            # Save data to localStorage using Pyodide's js module
+            js.window.localStorage.setItem(self.username, json.dumps(self.data))
         except Exception as e:
             print(f"Error saving data: {e}")
 

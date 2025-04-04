@@ -1,46 +1,64 @@
 import flet as ft
-from user_storage import FileSystemUserStorage, LocalStorageUserStorage
+import os
+from supabase import create_async_client, AsyncClient
+from user_storage import FileSystemUserStorage
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class UserManager:
     def __init__(self, page: ft.Page, users_dir="users"):
-        if page.platform in ["android", "ios", "linux", "windows", "macos"]:
-            self.user_storage = FileSystemUserStorage(users_dir)
-        else:
-            self.user_storage = LocalStorageUserStorage(page)
-
-    def register_user(self, username, password):
-        return self.user_storage.register_user(username, password)
-
-    def verify_user(self, username, password):
-        return self.user_storage.verify_user(username, password)
-
-'''import hashlib
-import os
-
-
-class UserManager:
-    def __init__(self, users_dir="users"):
+        self.page = page
         self.users_dir = users_dir
-        os.makedirs(self.users_dir, exist_ok=True)
+        self.user_storage = self.get_user_storage()
+        self.supabase_url = os.environ.get("SUPABASE_URL")
+        self.supabase_key = os.environ.get("SUPABASE_KEY")
+        self.supabase_service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        self.admin_supabase = None
+        self.public_supabase = None
 
-    def register_user(self, username, password):
-        user_path = os.path.join(self.users_dir, f"{username}.txt")
-        if os.path.exists(user_path):
-            return False
-        
-        salt = os.urandom(16)
-        hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
-        with open(user_path, "wb") as f:
-            f.write(salt + hashed_password.encode())
-        return True
+    def get_user_storage(self):
+        return FileSystemUserStorage(self.users_dir)
 
-    def verify_user(self, username, password):
-        user_path = os.path.join(self.users_dir, f"{username}.txt")
-        if not os.path.exists(user_path):
-            return False
-        with open(user_path, "rb") as f:
-            salt = f.read(16)
-            stored_hash = f.read().decode()
-        hashed_password = hashlib.sha256(salt + password.encode()).hexdigest()
-        return hashed_password == stored_hash
-'''
+    async def register_user(self, username, password):
+        success, access_token, refresh_token, user_id = (
+            await self.user_storage.register_user(
+                username,
+                password,
+                await self.get_admin_supabase_client(),
+            )
+        )
+        if success:
+            return access_token, user_id, refresh_token
+        else:
+            return None, None, None
+
+    async def verify_user(self, username, password):
+        access_token, refresh_token, user_id = await self.user_storage.verify_user(
+            username, password
+        )
+        if access_token:
+            print(f"verify_user - access_token: {access_token}, user_id: {user_id}")
+            return access_token, user_id, refresh_token
+        else:
+            return None, None, None
+
+    def get_access_token(self, username):
+        return self.user_storage.get_access_token(username)
+
+    async def get_supabase_client(self) -> AsyncClient:
+        """Returns a Supabase client."""
+        if self.public_supabase is None:
+            self.public_supabase = await create_async_client(
+                self.supabase_url, self.supabase_key
+            )
+        return self.public_supabase
+
+    async def get_admin_supabase_client(self) -> AsyncClient:
+        """Returns a Supabase client with service role key."""
+        if self.admin_supabase is None:
+            self.admin_supabase = await create_async_client(
+                self.supabase_url, self.supabase_service_role_key
+            )
+        return self.admin_supabase

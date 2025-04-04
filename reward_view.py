@@ -1,111 +1,97 @@
 import flet as ft
 from todo_view import ToDoList
+from postgrest import APIError
 
 
 def reward_view(page: ft.Page, todo_list: ToDoList):
+    reward_list = ft.ListView(expand=True, spacing=10, padding=20, auto_scroll=True)
+
+    async def refresh_reward_list():
+        reward_list.controls.clear()
+        if todo_list:
+            try:
+                rewards = await todo_list.get_all_rewards()
+                for reward in rewards:
+                    reward_id = reward["id"]
+                    reward_name = reward["reward"]
+                    cost = reward["medal_cost"]
+                    reward_list.controls.append(
+                        ft.ListTile(
+                            leading=ft.Checkbox(
+                                value=False,
+                                on_change=lambda e, reward_id=reward_id, reward_name=reward_name: page.run_task(
+                                    claim_reward, reward_id, reward_name
+                                ),
+                            ),
+                            title=ft.Text(reward_name),
+                            subtitle=ft.Text(f"{cost} medals"),
+                        )
+                    )
+            except APIError as e:
+                print(f"Supabase API Error: {e}")
+                print(f"Error details: {e.details}")
+                print(f"Error hint: {e.hint}")
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
+        page.update()
+
+    async def add_reward(e):
+        if todo_list:
+            try:
+                await todo_list.add_new_reward(
+                    {
+                        "username": todo_list.username,
+                        "reward": reward_input.value,
+                        "medal_cost": int(medal_cost_input.value),
+                    }
+                )
+                reward_input.value = ""
+                medal_cost_input.value = ""
+                await refresh_reward_list()
+            except APIError as e:
+                print(f"Supabase API Error: {e}")
+                print(f"Error details: {e.details}")
+                print(f"Error hint: {e.hint}")
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
+
+    async def claim_reward(reward_id, reward_name):
+        try:
+            await todo_list.claim_reward(reward_id, reward_name)
+            await refresh_reward_list()
+        except APIError as e:
+            print(f"Supabase API Error: {e}")
+            print(f"Error details: {e.details}")
+            print(f"Error hint: {e.hint}")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+
     reward_input = ft.TextField(label="New Reward", expand=True)
     medal_cost_input = ft.TextField(
         label="Medal Cost", keyboard_type=ft.KeyboardType.NUMBER, expand=True
     )
-    medal_count = ft.Text(f"You have {todo_list.medals} medals.")
-    reward_list = ft.Column()
+    add_reward_button = ft.ElevatedButton("Add Reward", on_click=add_reward)
 
-    def update_reward_list():
-        reward_list.controls.clear()
-        if todo_list:
-            rewards = todo_list.get_rewards()
-            print(rewards)  # Debug: Print the structure of rewards
-            for reward in rewards:
-                print(reward)  # Debug: Print each reward
-                # Adjust unpacking based on the structure of `reward`
-                reward_id = reward["id"]
-                reward_name = reward["reward"]
-                cost = reward["medal_cost"]
-                reward_list.controls.append(
-                    ft.Checkbox(
-                        label=f"{reward_name} - {cost} medals",
-                        value=False,
-                        on_change=lambda e, reward_id=reward_id: claim_reward(
-                            reward_id
-                        ),
-                    )
-                )
-        page.update()
-
-    def add_reward(e):
-        todo_list.add_reward(reward_input.value, int(medal_cost_input.value))
-        reward_input.value = ""
-        medal_cost_input.value = ""
-        update_reward_list()
-        page.update()
-
-    def claim_reward(reward_id):
-        result = todo_list.claim_reward(reward_id)
-        if result is True:
-            medal_count.value = f"You have {todo_list.medals} medals."
-            update_reward_list()
-            page.update()
-        elif result is False:
-            page.snack_bar = ft.SnackBar(
-                ft.Text("Not enough medals to claim this reward.")
-            )
-            page.snack_bar.open = True
-            page.update()
-        else:
-            page.snack_bar = ft.SnackBar(ft.Text("Reward not found."))
-            page.snack_bar.open = True
-            page.update()
-
-    update_reward_list()
+    page.run_task(refresh_reward_list)
 
     return ft.View(
         "/rewards",
         [
-            ft.SafeArea(
-                ft.Container(
-                    content=ft.ListView(
-                        controls=[
-                            ft.Column(
-                                [
-                                    ft.Row(
-                                        [
-                                            reward_input,
-                                            medal_cost_input,
-                                            ft.ElevatedButton(
-                                                "Add Reward", on_click=add_reward
-                                            ),
-                                        ],
-                                        expand=True,
-                                    ),
-                                    ft.Container(content=reward_list, expand=True),
-                                    medal_count,
-                                ],
-                                expand=True,
-                            )
-                        ],
-                        expand=True,
-                    ),
-                    padding=10,
-                )
-            ),
-            ft.BottomAppBar(
-                bgcolor=ft.Colors.BLACK38,
-                shape=ft.NotchShape.CIRCULAR,
-                content=ft.Row(
-                    controls=[
-                        ft.IconButton(
-                            icon=ft.Icons.CHECK_BOX_ROUNDED,
-                            icon_color=ft.Colors.WHITE,
-                            on_click=lambda _: page.go("/"),
-                        ),
-                        ft.Container(expand=True),
-                        ft.IconButton(
-                            icon=ft.Icons.MONEY_ROUNDED,
-                            icon_color=ft.Colors.WHITE,
-                            on_click=lambda _: page.go("/rewards"),
-                        ),
-                    ]
+            ft.AppBar(
+                title=ft.Text("Rewards"),
+                leading=ft.IconButton(
+                    icon=ft.Icons.ARROW_BACK, on_click=lambda _: page.go("/")
                 ),
+            ),
+            ft.Column(
+                [
+                    ft.Row(
+                        [reward_input, medal_cost_input, add_reward_button],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    reward_list,
+                ],
+                expand=True,
             ),
         ],
     )

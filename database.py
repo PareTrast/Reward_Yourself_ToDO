@@ -1,193 +1,163 @@
 import os
-import shutil
-from supabase import create_client, Client
+import json
+from supabase import create_async_client, AsyncClient
+from supabase.lib.client_options import ClientOptions
 from dotenv import load_dotenv
 
 load_dotenv()
 
-
-class Storage:
-    def create_tables(self):
-        raise NotImplementedError
-
-    def load_data(self):
-        raise NotImplementedError
-
-    def add_task(self, task, due_date=None):
-        raise NotImplementedError
-
-    def mark_task_done(self, task_id):
-        raise NotImplementedError
-
-    def add_reward(self, reward, medal_cost):
-        raise NotImplementedError
-
-    def claim_reward(self, reward_id):
-        raise NotImplementedError
-
-    def get_tasks(self, due_date=None):
-        raise NotImplementedError
-
-    def get_tasks_by_date_range(self, start_date, end_date):
-        raise NotImplementedError
-
-    def get_rewards(self):
-        raise NotImplementedError
-
-    def export_data(self, export_path):
-        raise NotImplementedError
-
-    def import_data(self, import_path):
-        raise NotImplementedError
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 
-class SupabaseStorage(Storage):
-    def __init__(self, api_url, api_key, username):
-        self.supabase: Client = create_client(api_url, api_key)
-        self.username = username
-        self.data = {"tasks": [], "rewards": [], "medals": 0}
-        self.medals = 0  # Initialize medals to 0
-        self.load_data()
+class Database:
+    SESSION_FILE = "session.json"
 
-    def load_data(self):
-        """
-        Load tasks, rewards, and medals from Supabase.
-        """
-        # Load medals
-        response = (
-            self.supabase.table("medals")
-            .select("count")
-            .eq("username", self.username)
-            .execute()
+    def __init__(self, is_web_environment=False):
+        if not SUPABASE_URL:
+            raise ValueError("SUPABASE_URL environment variable is not set.")
+        if not SUPABASE_KEY:
+            raise ValueError("SUPABASE_KEY environment variable is not set.")
+
+        self.supabase: AsyncClient = None
+        self.access_token = None
+        self.refresh_token = None
+        self.is_web_environment = is_web_environment
+
+    async def create_supabase_client(self):
+        self.supabase: AsyncClient = await create_async_client(
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            options=ClientOptions(auto_refresh_token=True, persist_session=False),
         )
-        if response.data:
-            self.data["medals"] = response.data[0]["count"]
-            self.medals = self.data["medals"]  # Sync medals attribute
-        else:
-            # Initialize medals for the user if not present
-            self.supabase.table("medals").insert(
-                {"username": self.username, "count": 0}
-            ).execute()
-            self.data["medals"] = 0
-            self.medals = 0
 
-        # Load tasks
-        response = (
-            self.supabase.table("tasks")
-            .select("*")
-            .eq("username", self.username)
-            .execute()
-        )
-        self.data["tasks"] = response.data if response.data else []
+    async def set_access_token(self, access_token, refresh_token):
 
-        # Load rewards
-        response = (
-            self.supabase.table("rewards")
-            .select("*")
-            .eq("username", self.username)
-            .execute()
-        )
-        self.data["rewards"] = response.data if response.data else []
+        self.access_token = access_token
+        self.refresh_token = refresh_token
 
-    def save_medals(self):
-        """
-        Save medals count to Supabase.
-        """
-        self.supabase.table("medals").update({"count": self.data["medals"]}).eq(
-            "username", self.username
-        ).execute()
+        await self.supabase.auth.set_session(access_token, refresh_token)
 
-    def add_task(self, task, due_date=None):
-        """
-        Add a new task to Supabase.
-        """
-        self.supabase.table("tasks").insert(
-            {
-                "username": self.username,
-                "task": task,
-                "done": False,
-                "due_date": due_date,
-            }
-        ).execute()
+        self.save_session(access_token, refresh_token)
 
-    def mark_task_done(self, task_id):
-        """
-        Mark a task as done and increment medals count.
-        """
-        self.supabase.table("tasks").delete().eq("id", task_id).execute()
-        self.data["medals"] += 1
-        self.medals = self.data["medals"]  # Sync medals attribute
-        self.save_medals()
+    def save_session(self, access_token, refresh_token):
+        session_data = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        }
+        with open(self.SESSION_FILE, "w") as f:
+            json.dump(session_data, f)
 
-    def add_reward(self, reward, medal_cost):
-        """
-        Add a new reward to Supabase.
-        """
-        self.supabase.table("rewards").insert(
-            {"username": self.username, "reward": reward, "medal_cost": medal_cost}
-        ).execute()
+    def load_session(self):
+        try:
+            with open(self.SESSION_FILE, "r") as f:
+                session_data = json.load(f)
+                return session_data
+        except FileNotFoundError:
+            return None
 
-    def claim_reward(self, reward_id):
-        """
-        Claim a reward if the user has enough medals.
-        """
-        response = (
-            self.supabase.table("rewards").select("*").eq("id", reward_id).execute()
-        )
-        if response.data:
-            reward = response.data[0]
-            if self.data["medals"] >= reward["medal_cost"]:
-                self.data["medals"] -= reward["medal_cost"]
-                self.medals = self.data["medals"]  # Sync medals attribute
-                self.save_medals()
-                self.supabase.table("rewards").delete().eq("id", reward_id).execute()
-                return True
-        return False
-
-    def get_tasks(self, due_date=None):
-        """
-        Retrieve tasks from Supabase.
-        """
-        if due_date:
-            response = (
-                self.supabase.table("tasks")
-                .select("*")
-                .eq("username", self.username)
-                .eq("due_date", due_date)
-                .execute()
-            )
-        else:
-            response = (
-                self.supabase.table("tasks")
-                .select("*")
-                .eq("username", self.username)
-                .execute()
-            )
+    def _handle_response(self, response):
+        if hasattr(response, "error") and response.error:
+            raise Exception(f"Supabase error: {response.error}")
         return response.data
 
-    def get_rewards(self):
-        """
-        Retrieve rewards from Supabase.
-        """
-        response = (
-            self.supabase.table("rewards")
-            .select("*")
-            .eq("username", self.username)
-            .execute()
-        )
-        return response.data  # Ensure this returns a list of dictionaries
+    async def get_tasks(self):
+        try:
+            response = await self.supabase.table("tasks").select("*").execute()
+            return self._handle_response(response)
+        except Exception as e:
+            return []
 
+    async def get_rewards(self):
+        try:
+            response = await self.supabase.table("rewards").select("*").execute()
+            return self._handle_response(response)
+        except Exception as e:
+            return []
 
-def get_storage(page, username):
-    """
-    Factory function to initialize the appropriate storage backend.
-    Uses Supabase for both web and non-web platforms.
-    """
-    print("Using Supabase for storage.")
-    api_url = os.getenv("SUPABASE_API_URL")  # Use environment variables for security
-    api_key = os.getenv("SUPABASE_API_KEY")
-    if not api_url or not api_key:
-        raise RuntimeError(
-            "Supabase API URL or API Key is not set in environment variables."
-        )
-    return SupabaseStorage(api_url, api_key, username)
+    async def add_task(self, task_data):
+        try:
+            response = await self.supabase.table("tasks").insert(task_data).execute()
+            self._handle_response(response)
+        except Exception as e:
+            raise
+
+    async def add_reward(self, reward_data):
+        try:
+            response = (
+                await self.supabase.table("rewards").insert(reward_data).execute()
+            )
+            self._handle_response(response)
+        except Exception as e:
+            raise
+
+    async def add_task_history(self, task_history_data, user_id):
+        try:
+
+            response = (
+                await self.supabase.table("task_history")
+                .insert(task_history_data)
+                .execute()
+            )
+            self._handle_response(response)
+        except Exception as e:
+            raise
+
+    async def add_reward_history(self, reward_history_data, user_id):
+        try:
+
+            response = (
+                await self.supabase.table("reward_history")
+                .insert(reward_history_data)
+                .execute()
+            )
+            self._handle_response(response)
+        except Exception as e:
+            raise
+
+    async def delete_task(self, task_id):
+        try:
+            response = (
+                await self.supabase.table("tasks").delete().eq("id", task_id).execute()
+            )
+            self._handle_response(response)
+        except Exception as e:
+            raise
+
+    async def delete_reward(self, reward_id):
+        try:
+            response = (
+                await self.supabase.table("rewards")
+                .delete()
+                .eq("id", reward_id)
+                .execute()
+            )
+            self._handle_response(response)
+        except Exception as e:
+            raise
+
+    async def get_task_history(self, user_id):
+        try:
+            response = (
+                await self.supabase.table("task_history")
+                .select("*")
+                .eq("user_id", user_id)
+                .execute()
+            )
+            return self._handle_response(response)
+        except Exception as e:
+            print(f"Error fetching task history: {e}")
+            return []
+
+    async def get_reward_history(self, user_id):
+        try:
+            response = (
+                await self.supabase.table("reward_history")
+                .select("*")
+                .eq("user_id", user_id)
+                .execute()
+            )
+            return self._handle_response(response)
+        except Exception as e:
+            print(f"Error fetching reward history: {e}")
+            return []

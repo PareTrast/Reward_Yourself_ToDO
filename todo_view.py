@@ -1,43 +1,68 @@
-import platform
-import os
-import shutil
-import flet as ft
-from database import get_storage
+import datetime
+from database import Database
 
 
 class ToDoList:
-    def __init__(self, page, username):
-        self.storage = get_storage(page, username)  # Use the factory function
-        self.load_data()
+    def __init__(self, username=None, is_web_environment=False):
+        self.username = username
+        self.user_id = None
+        self.refresh_token = None
+        self.access_token = None
+        self.db = None
+        self.is_web_environment = is_web_environment
+        self.create_db_client()
 
-    def load_data(self):
-        self.storage.load_data()
-        self.medals = self.storage.medals  # This will now work correctly
+    async def create_db_client(self):
+        self.db = Database(self.is_web_environment)
+        await self.db.create_supabase_client()
+        if self.access_token and self.refresh_token:
+            await self.db.set_access_token(self.access_token, self.refresh_token)
 
-    def add_task(self, task, due_date=None):
-        self.storage.add_task(task, due_date)
+    def set_user_id(self, user_id):
+        self.user_id = user_id
 
-    def mark_task_done(self, task_id):
-        self.storage.mark_task_done(task_id)
-        self.load_data()
+    def set_refresh_token(self, refresh_token):
+        self.refresh_token = refresh_token
 
-    def add_reward(self, reward, medal_cost):
-        self.storage.add_reward(reward, medal_cost)
+    def set_access_token(self, access_token):
+        self.access_token = access_token
 
-    def claim_reward(self, reward_id):
-        return self.storage.claim_reward(reward_id)
+    async def get_all_tasks(self):
+        tasks = await self.db.get_tasks()
+        return tasks
 
-    def get_tasks(self, due_date=None):
-        return self.storage.get_tasks(due_date)
+    async def get_all_rewards(self):
+        rewards = await self.db.get_rewards()
+        return rewards
 
-    def get_tasks_by_date_range(self, start_date, end_date):
-        return self.storage.get_tasks_by_date_range(start_date, end_date)
+    async def add_new_task(self, task_data):
+        await self.db.add_task(task_data)
 
-    def get_rewards(self):
-        return self.storage.get_rewards()
+    async def add_new_reward(self, reward_data):
+        await self.db.add_reward(reward_data)
 
-    def export_data(self, export_path):
-        self.storage.export_data(export_path)
+    async def mark_task_done(self, task_id, task_name):
+        history_data = {
+            "username": self.username,
+            "description": task_name,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user_id": self.user_id,  # Add user_id here
+        }
+        await self.db.add_task_history(history_data, self.user_id)
+        await self.db.delete_task(task_id)
 
-    def import_data(self, import_path):
-        self.storage.import_data(import_path)
+    async def claim_reward(self, reward_id, reward_name):
+        history_data = {
+            "username": self.username,
+            "description": reward_name,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user_id": self.user_id,  # Add user_id here
+        }
+        await self.db.add_reward_history(history_data, self.user_id)
+        await self.db.delete_reward(reward_id)
+
+    async def get_task_history(self):
+        return await self.db.get_task_history(self.user_id)
+
+    async def get_reward_history(self):
+        return await self.db.get_reward_history(self.user_id)

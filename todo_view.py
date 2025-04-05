@@ -1,6 +1,7 @@
 import datetime
 import os
 import sys
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -55,28 +56,18 @@ class ToDoList:
         Fetches all tasks for the user.
         """
         try:
-            if self.is_web_environment:
-                response = await pyfetch(
-                    url=f"{self.api_url}/tasks?username=eq.{self.username}",
-                    method="GET",
-                    headers={
-                        "Authorization": f"Bearer {self.access_token}",
-                        "apikey": SUPABASE_KEY,
-                    },
-                )
-                return await response.json()
-            else:
-                response = requests.get(
-                    f"{self.api_url}/tasks?username=eq.{self.username}",
-                    headers={
-                        "Authorization": f"Bearer {self.access_token}",
-                        "apikey": SUPABASE_KEY,
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await pyfetch(
+                url=f"{SUPABASE_URL}/rest/v1/tasks?username=eq.{self.username}",
+                method="GET",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Content-Type": "application/json",
+                },
+            )
+            tasks = await response.json()
+            return tasks
         except Exception as e:
-            print(f"Error fetching tasks: {e}")
+            print(f"Error fetching tasks (web): {e}")
             return []
 
     async def add_new_task(self, task_data):
@@ -84,30 +75,21 @@ class ToDoList:
         Adds a new task for the user.
         """
         try:
-            if self.is_web_environment:
-                await pyfetch(
-                    url=f"{self.api_url}/tasks",
-                    method="POST",
-                    headers={
-                        "Authorization": f"Bearer {self.access_token}",
-                        "apikey": SUPABASE_KEY,
-                        "Content-Type": "application/json",
-                    },
-                    body=task_data,
-                )
+            response = await pyfetch(
+                url=f"{self.api_url}/tasks",
+                method="POST",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Content-Type": "application/json",
+                },
+                body=json.dumps(task_data),
+            )
+            if response.status == 201:  # HTTP 201 Created
+                print("Task added successfully.")
             else:
-                response = requests.post(
-                    f"{self.api_url}/tasks",
-                    json=task_data,
-                    headers={
-                        "Authorization": f"Bearer {self.access_token}",
-                        "apikey": SUPABASE_KEY,
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
+                print(f"Failed to add task. Status: {response.status}")
         except Exception as e:
-            print(f"Error adding task: {e}")
+            print(f"Error adding task (web): {e}")
 
     async def get_all_rewards(self):
         """

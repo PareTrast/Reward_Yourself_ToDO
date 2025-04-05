@@ -4,6 +4,7 @@ import sys
 from supabase import create_async_client, AsyncClient
 from user_storage import FileSystemUserStorage
 from dotenv import load_dotenv
+import json
 
 # Load environment variables
 load_dotenv()
@@ -37,121 +38,61 @@ class UserManager:
         """
         Registers a new user with Supabase.
         """
-        if self.page.web:  # Web environment
-            try:
-                print("Web environment: Registering user...")
-                print(
-                    "Headers:",
+        try:
+            # Use pyfetch for HTTP requests in the web environment
+            response = await pyfetch(
+                url=f"{self.supabase_url}/auth/v1/signup",
+                method="POST",
+                headers={
+                    "apikey": self.supabase_key,
+                    "Content-Type": "application/json",
+                },
+                body=json.dumps(
                     {
-                        "apikey": self.supabase_key,
-                        "Content-Type": "application/json",
-                    },
-                )
-                response = await pyfetch(
-                    url=f"{self.supabase_url}/auth/v1/signup",
-                    method="POST",
-                    headers={
-                        "apikey": self.supabase_key,  # Ensure the apikey is included
-                        "Content-Type": "application/json",
-                    },
-                    body={
                         "email": username,
                         "password": password,
                         "data": {"username": username},
-                    },
-                )
-                data = await response.json()
-                return (
-                    data.get("access_token"),
-                    data.get("user", {}).get("id"),
-                    data.get("refresh_token"),
-                )
-            except Exception as e:
-                print(f"Error during registration (web): {e}")
-                return None, None, None
-        else:  # Non-web environment
-            try:
-                print("Non-web environment: Registering user...")
-                print(
-                    "Headers:",
-                    {
-                        "apikey": self.supabase_key,
-                        "Content-Type": "application/json",
-                    },
-                )
-                response = requests.post(
-                    f"{self.supabase_url}/auth/v1/signup",
-                    json={
-                        "email": username,
-                        "password": password,
-                        "data": {"username": username},
-                    },
-                    headers={
-                        "apikey": self.supabase_key,  # Ensure the apikey is included
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
-                return (
-                    data.get("access_token"),
-                    data.get("user", {}).get("id"),
-                    data.get("refresh_token"),
-                )
-            except Exception as e:
-                print(f"Error during registration (non-web): {e}")
-                return None, None, None
+                    }
+                ),
+            )
+            data = await response.json()
+            return (
+                data.get("access_token"),
+                data.get("user", {}).get("id"),
+                data.get("refresh_token"),
+            )
+        except Exception as e:
+            print(f"Error during registration (web): {e}")
+            return None, None, None
 
     async def verify_user(self, email, password):
         """
         Verifies a user's credentials and logs them in.
         """
-        if "pyodide" in sys.modules:  # Web environment
-            try:
-                response = await pyfetch(
-                    url=f"{self.supabase_url}/auth/v1/token?grant_type=password",
-                    method="POST",
-                    headers={
-                        "apikey": self.supabase_key,
-                        "Content-Type": "application/json",
-                    },
-                    body={
+        try:
+            response = await pyfetch(
+                url=f"{self.supabase_url}/auth/v1/token?grant_type=password",
+                method="POST",
+                headers={
+                    "apikey": self.supabase_key,
+                    "Content-Type": "application/json",
+                },
+                body=json.dumps(
+                    {
                         "email": email,
                         "password": password,
-                    },
-                )
-                data = await response.json()
-                return (
-                    data.get("access_token"),
-                    data.get("user", {}).get("id"),
-                    data.get("refresh_token"),
-                )
-            except Exception as e:
-                print(f"Error during login (web): {e}")
-                return None, None, None
-        else:  # Non-web environment
-            try:
-                response = requests.post(
-                    f"{self.supabase_url}/auth/v1/token?grant_type=password",
-                    json={
-                        "email": email,
-                        "password": password,
-                    },
-                    headers={
-                        "apikey": self.supabase_key,
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
-                return (
-                    data.get("access_token"),
-                    data.get("user", {}).get("id"),
-                    data.get("refresh_token"),
-                )
-            except Exception as e:
-                print(f"Error during login (non-web): {e}")
-                return None, None, None
+                    }
+                ),
+            )
+            data = await response.json()
+            return (
+                data.get("access_token"),
+                data.get("user", {}).get("id"),
+                data.get("refresh_token"),
+            )
+        except Exception as e:
+            print(f"Error during login (web): {e}")
+            return None, None, None
 
     def get_access_token(self, username):
         return self.user_storage.get_access_token(username)

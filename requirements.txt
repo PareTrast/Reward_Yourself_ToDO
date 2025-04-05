@@ -2,3 +2,4 @@ flet
 arrow 
 supabase
 python-dotenv
+pyodide-http

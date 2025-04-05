@@ -1,6 +1,12 @@
 import flet as ft
 from todo_view import ToDoList
-from postgrest import APIError
+import sys
+
+# Conditional import based on environment
+if "pyodide" in sys.modules:  # Running in a Pyodide (web) environment
+    from pyodide.http import pyfetch  # type: ignore
+else:  # Running in a non-web environment
+    import requests
 
 
 def reward_view(page: ft.Page, todo_list: ToDoList):
@@ -10,7 +16,29 @@ def reward_view(page: ft.Page, todo_list: ToDoList):
         reward_list.controls.clear()
         if todo_list:
             try:
-                rewards = await todo_list.get_all_rewards()
+                if "pyodide" in sys.modules:  # Web environment
+                    # Fetch rewards using pyodide-http
+                    response = await pyfetch(
+                        url=f"{todo_list.api_url}/rewards",
+                        method="GET",
+                        headers={
+                            "Authorization": f"Bearer {todo_list.access_token}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    rewards = await response.json()
+                else:  # Non-web environment
+                    # Fetch rewards using requests
+                    response = requests.get(
+                        f"{todo_list.api_url}/rewards",
+                        headers={
+                            "Authorization": f"Bearer {todo_list.access_token}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    response.raise_for_status()
+                    rewards = response.json()
+
                 for reward in rewards:
                     reward_id = reward["id"]
                     reward_name = reward["reward"]
@@ -27,10 +55,6 @@ def reward_view(page: ft.Page, todo_list: ToDoList):
                             subtitle=ft.Text(f"{cost} medals"),
                         )
                     )
-            except APIError as e:
-                print(f"Supabase API Error: {e}")
-                print(f"Error details: {e.details}")
-                print(f"Error hint: {e.hint}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
         page.update()
@@ -38,31 +62,67 @@ def reward_view(page: ft.Page, todo_list: ToDoList):
     async def add_reward(e):
         if todo_list:
             try:
-                await todo_list.add_new_reward(
-                    {
-                        "username": todo_list.username,
-                        "reward": reward_input.value,
-                        "medal_cost": int(medal_cost_input.value),
-                    }
-                )
+                if "pyodide" in sys.modules:  # Web environment
+                    # Add a new reward using pyodide-http
+                    await pyfetch(
+                        url=f"{todo_list.api_url}/rewards",
+                        method="POST",
+                        headers={
+                            "Authorization": f"Bearer {todo_list.access_token}",
+                            "Content-Type": "application/json",
+                        },
+                        body={
+                            "username": todo_list.username,
+                            "reward": reward_input.value,
+                            "medal_cost": int(medal_cost_input.value),
+                        },
+                    )
+                else:  # Non-web environment
+                    # Add a new reward using requests
+                    response = requests.post(
+                        f"{todo_list.api_url}/rewards",
+                        json={
+                            "username": todo_list.username,
+                            "reward": reward_input.value,
+                            "medal_cost": int(medal_cost_input.value),
+                        },
+                        headers={
+                            "Authorization": f"Bearer {todo_list.access_token}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    response.raise_for_status()
+
                 reward_input.value = ""
                 medal_cost_input.value = ""
                 await refresh_reward_list()
-            except APIError as e:
-                print(f"Supabase API Error: {e}")
-                print(f"Error details: {e.details}")
-                print(f"Error hint: {e.hint}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
 
     async def claim_reward(reward_id, reward_name):
         try:
-            await todo_list.claim_reward(reward_id, reward_name)
+            if "pyodide" in sys.modules:  # Web environment
+                # Claim a reward using pyodide-http
+                await pyfetch(
+                    url=f"{todo_list.api_url}/rewards/{reward_id}/claim",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {todo_list.access_token}",
+                        "Content-Type": "application/json",
+                    },
+                )
+            else:  # Non-web environment
+                # Claim a reward using requests
+                response = requests.post(
+                    f"{todo_list.api_url}/rewards/{reward_id}/claim",
+                    headers={
+                        "Authorization": f"Bearer {todo_list.access_token}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                response.raise_for_status()
+
             await refresh_reward_list()
-        except APIError as e:
-            print(f"Supabase API Error: {e}")
-            print(f"Error details: {e.details}")
-            print(f"Error hint: {e.hint}")
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
 

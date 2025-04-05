@@ -1,6 +1,8 @@
 import asyncio
 import flet as ft
 import os
+import sys
+import json
 from calendar_view import build_calendar
 from database import Database
 from todo_view import ToDoList
@@ -9,9 +11,58 @@ from reward_view import reward_view
 from history_view import history_view
 import arrow
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+pyfetch = None  # Initialize pyfetch as None by default
+
+
+def read_tokens_from_session():
+    """
+    Reads the access_token and refresh_token from session.json.
+    """
+    try:
+        with open("session.json", "r") as file:
+            session_data = json.load(file)
+            access_token = session_data.get("access_token")
+            refresh_token = session_data.get("refresh_token")
+            return access_token, refresh_token
+    except FileNotFoundError:
+        print("session.json not found.")
+        return None, None
+    except json.JSONDecodeError:
+        print("Error decoding session.json.")
+        return None, None
+
+
+def write_tokens_to_session(access_token, refresh_token):
+    """
+    Writes the access_token and refresh_token to session.json.
+    """
+    try:
+        with open("session.json", "w") as file:
+            json.dump(
+                {"access_token": access_token, "refresh_token": refresh_token}, file
+            )
+    except Exception as e:
+        print(f"Error writing to session.json: {e}")
 
 
 async def main(page: ft.Page):
+    global pyfetch  # Declare pyfetch as global to use it throughout the app
+
+    if page.web:  # Web environment
+        try:
+            from pyodide.http import pyfetch  # Dynamically import pyfetch
+
+            print("pyfetch imported successfully.")
+        except ImportError:
+            print("Error: pyfetch is not available in this environment.")
+            pyfetch = None
 
     page.title = "Reward Yourself"
     page.horizontal_alignment = page.vertical_alignment = "center"
@@ -32,25 +83,21 @@ async def main(page: ft.Page):
 
     async def _get_tokens(username=None):
         """Retrieves tokens based on the environment."""
-        if page.web:
-            access_token = page.client_storage.get("access_token")
-            refresh_token = page.client_storage.get("refresh_token")
-
+        if page.web:  # Web environment
+            try:
+                access_token = page.client_storage.get("access_token")
+                refresh_token = page.client_storage.get("refresh_token")
+                if not access_token or not refresh_token:
+                    print("Tokens not found in client storage.")
+                    return None, None
+                return access_token, refresh_token
+            except TimeoutError:
+                print("Error: Unable to retrieve tokens from client storage.")
+                return None, None
+        else:  # Non-web environment
+            # Read tokens from session.json
+            access_token, refresh_token = read_tokens_from_session()
             return access_token, refresh_token
-        else:
-            user_storage = user_manager.get_user_storage()
-            users_dir = "users"
-            if os.path.exists(users_dir):
-                for filename in os.listdir(users_dir):
-                    if filename.endswith(".tokens"):
-                        username = filename[:-7]  # Remove ".tokens"
-                        tokens = user_storage.get_tokens(username)
-                        if tokens:
-                            access_token = tokens["access_token"]
-                            refresh_token = tokens["refresh_token"]
-
-                            return access_token, refresh_token
-        return None, None
 
     async def check_login():
         username = None
@@ -75,12 +122,11 @@ async def main(page: ft.Page):
                     refresh_token = response.session.refresh_token
 
                     user = await supabase.auth.get_user(access_token)
-                    if page.web:
+                    if page.web:  # Web environment
                         page.client_storage.set("access_token", access_token)
                         page.client_storage.set("refresh_token", refresh_token)
-                    else:
-                        user_storage = user_manager.get_user_storage()
-                        user_storage.store_tokens(username, access_token, refresh_token)
+                    else:  # Non-web environment
+                        write_tokens_to_session(access_token, refresh_token)
                 else:
                     return False, False, False, False
             except Exception as e:
@@ -111,9 +157,7 @@ async def main(page: ft.Page):
                 username, password
             )
             if access_token and refresh_token:
-                todo_list = ToDoList(
-                    username=username, is_web_environment=is_web_environment
-                )
+                todo_list = ToDoList(username=username, is_web_environment=page.web)
                 await todo_list.create_db_client()
                 await todo_list.db.set_access_token(access_token, refresh_token)
                 todo_list.set_user_id(user_id)
@@ -163,9 +207,7 @@ async def main(page: ft.Page):
             ):
                 nonlocal username, todo_list
                 username = register_username.value
-                todo_list = ToDoList(
-                    username=username, is_web_environment=is_web_environment
-                )
+                todo_list = ToDoList(username=username, is_web_environment=page.web)
                 await todo_list.create_db_client()
                 await todo_list.db.set_access_token(access_token, refresh_token)
                 todo_list.set_user_id(user_id)
@@ -423,9 +465,7 @@ async def main(page: ft.Page):
             username, user_id, access_token, refresh_token = await check_login()
             if username:
 
-                todo_list = ToDoList(
-                    username=username, is_web_environment=is_web_environment
-                )
+                todo_list = ToDoList(username=username, is_web_environment=page.web)
                 todo_list.set_user_id(user_id)
                 todo_list.set_refresh_token(refresh_token)
                 todo_list.set_access_token(access_token)
@@ -464,7 +504,7 @@ async def main(page: ft.Page):
     username, user_id, access_token, refresh_token = await check_login()
     if username:
 
-        todo_list = ToDoList(username=username, is_web_environment=is_web_environment)
+        todo_list = ToDoList(username=username, is_web_environment=page.web)
         todo_list.set_user_id(user_id)
         todo_list.set_refresh_token(refresh_token)
         await todo_list.create_db_client()
@@ -475,7 +515,9 @@ async def main(page: ft.Page):
             and isinstance(access_token, str)
             and isinstance(refresh_token, str)
         ):
-            await todo_list.db.set_access_token(access_token, refresh_token)
+
+            todo_list.set_access_token(access_token)
+            todo_list.set_refresh_token(refresh_token)
         await route_change(page.route)
     else:
         show_login_view()

@@ -18,8 +18,6 @@ load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-pyfetch = None  # Initialize pyfetch as None by default
-
 
 def read_tokens_from_session():
     """
@@ -54,15 +52,6 @@ def write_tokens_to_session(access_token, refresh_token):
 
 async def main(page: ft.Page):
     global pyfetch  # Declare pyfetch as global to use it throughout the app
-
-    if page.web:  # Web environment
-        try:
-            from pyodide.http import pyfetch  # Dynamically import pyfetch
-
-            print("pyfetch imported successfully.")
-        except ImportError:
-            print("Error: pyfetch is not available in this environment.")
-            pyfetch = None
 
     page.title = "Reward Yourself"
     page.horizontal_alignment = page.vertical_alignment = "center"
@@ -122,10 +111,15 @@ async def main(page: ft.Page):
                     refresh_token = response.session.refresh_token
 
                     user = await supabase.auth.get_user(access_token)
-                    if page.web:  # Web environment
-                        page.client_storage.set("access_token", access_token)
-                        page.client_storage.set("refresh_token", refresh_token)
-                    else:  # Non-web environment
+                    if page.web:
+                        print(
+                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                        )
+                        write_tokens_to_session(access_token, refresh_token)
+                    else:
+                        print(
+                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                        )
                         write_tokens_to_session(access_token, refresh_token)
                 else:
                     return False, False, False, False
@@ -133,6 +127,8 @@ async def main(page: ft.Page):
                 return False, False, False, False
 
         if user:
+            print(f"Access Token: {access_token}")
+            print(f"Refresh Token: {refresh_token}")
             return (
                 user.user.user_metadata["username"],
                 user.user.id,
@@ -158,11 +154,21 @@ async def main(page: ft.Page):
             )
             if access_token and refresh_token:
                 todo_list = ToDoList(username=username, is_web_environment=page.web)
-                await todo_list.create_db_client()
-                await todo_list.db.set_access_token(access_token, refresh_token)
+                await todo_list.create_db_client()  # Ensure db_client is initialized
+                todo_list.set_access_token(access_token, refresh_token)
                 todo_list.set_user_id(user_id)
                 todo_list.set_refresh_token(refresh_token)
-                todo_list.set_access_token(access_token)
+                todo_list.set_access_token(access_token, refresh_token)
+                if page.web:
+                    print(
+                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                    )
+                    write_tokens_to_session(access_token, refresh_token)
+                else:
+                    print(
+                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                    )
+                    write_tokens_to_session(access_token, refresh_token)
                 page.views.clear()
                 page.go("/")
             else:
@@ -208,25 +214,35 @@ async def main(page: ft.Page):
                 nonlocal username, todo_list
                 username = register_username.value
                 todo_list = ToDoList(username=username, is_web_environment=page.web)
-                await todo_list.create_db_client()
-                await todo_list.db.set_access_token(access_token, refresh_token)
+                await todo_list.create_db_client()  # Ensure db_client is initialized
+                if todo_list.db_client:  # Check if db_client is initialized
+                    await todo_list.db_client.set_access_token(
+                        access_token, refresh_token
+                    )
                 todo_list.set_user_id(user_id)
                 todo_list.set_refresh_token(refresh_token)
                 todo_list.set_access_token(access_token)
-                user_storage = user_manager.get_user_storage()
                 if page.web:
-                    page.client_storage.set("access_token", access_token)
-                    page.client_storage.set("refresh_token", refresh_token)
+                    print(
+                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                    )
+                    write_tokens_to_session(access_token, refresh_token)
                 else:
-                    user_storage.store_tokens(username, access_token, refresh_token)
+                    print(
+                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                    )
+                    write_tokens_to_session(access_token, refresh_token)
+
+                # Redirect to the ToDo view after successful registration
                 page.views.clear()
-                page.go("/")
+                await show_main_view()  # Call the function to show the ToDo view
                 page.update()
             else:
-                page.snack_bar = ft.SnackBar(ft.Text("Username already taken."))
+                page.snack_bar = ft.SnackBar(
+                    ft.Text("Username already taken or invalid.")
+                )
                 page.snack_bar.open = True
                 page.update()
-            time.sleep(3)
 
         register_username = ft.TextField(label="Username")
         register_password = ft.TextField(
@@ -289,6 +305,7 @@ async def main(page: ft.Page):
             reward_list.controls.clear()
             if todo_list:
                 rewards = await todo_list.get_all_rewards()
+                print(f"Fetched Rewards: {rewards}")  # Debugging
                 for reward in rewards:
                     reward_id = reward["id"]
                     reward_name = reward["reward"]
@@ -297,8 +314,8 @@ async def main(page: ft.Page):
                         ft.Checkbox(
                             label=f"{reward_name} - {cost} medals",
                             value=False,
-                            on_change=lambda e, reward_id=reward_id, reward_name=reward_name: claim_reward(
-                                reward_id, reward_name
+                            on_change=lambda e, reward_id=reward_id, reward_name=reward_name: asyncio.create_task(
+                                claim_reward(reward_id, reward_name)
                             ),
                         )
                     )
@@ -334,7 +351,7 @@ async def main(page: ft.Page):
                     page.snack_bar.open = True
                     page.update()
 
-        async def add_reward(e):
+        """async def add_reward(e):
             if todo_list:
                 if reward_input.value and medal_cost_input.value.isdigit():
                     await todo_list.add_new_reward(
@@ -352,12 +369,17 @@ async def main(page: ft.Page):
                         ft.Text("Please enter valid reward details.")
                     )
                     page.snack_bar.open = True
-                    page.update()
+                    page.update()"""
 
         async def claim_reward(reward_id, reward_name):
+            print(f"Claiming reward: {reward_name} (ID: {reward_id})")  # Debugging
             if todo_list:
-                await todo_list.claim_reward(reward_id, reward_name)
-                await update_reward_list()
+                try:
+                    await todo_list.claim_reward(reward_id, reward_name)
+                    print(f"Reward claimed successfully: {reward_name}")  # Debugging
+                    await update_reward_list()
+                except Exception as e:
+                    print(f"Error claiming reward: {e}")
 
         page.views.append(
             ft.View(
@@ -466,10 +488,10 @@ async def main(page: ft.Page):
             if username:
 
                 todo_list = ToDoList(username=username, is_web_environment=page.web)
+                await todo_list.create_db_client()  # Ensure db_client is initialized
                 todo_list.set_user_id(user_id)
                 todo_list.set_refresh_token(refresh_token)
                 todo_list.set_access_token(access_token)
-                await todo_list.create_db_client()
 
                 if (
                     access_token
@@ -477,7 +499,19 @@ async def main(page: ft.Page):
                     and isinstance(access_token, str)
                     and isinstance(refresh_token, str)
                 ):
-                    await todo_list.db.set_access_token(access_token, refresh_token)
+                    if page.web:
+                        print(
+                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                        )
+                        write_tokens_to_session(access_token, refresh_token)
+                    else:
+                        print(
+                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                        )
+                        write_tokens_to_session(access_token, refresh_token)
+                    await todo_list.db_client.set_access_token(
+                        access_token, refresh_token
+                    )
         if todo_list:
             if page.route == "/rewards":
                 page.views.append(reward_view(page, todo_list))
@@ -505,9 +539,9 @@ async def main(page: ft.Page):
     if username:
 
         todo_list = ToDoList(username=username, is_web_environment=page.web)
+        await todo_list.create_db_client()  # Ensure db_client is initialized
         todo_list.set_user_id(user_id)
         todo_list.set_refresh_token(refresh_token)
-        await todo_list.create_db_client()
 
         if (
             access_token
@@ -516,8 +550,19 @@ async def main(page: ft.Page):
             and isinstance(refresh_token, str)
         ):
 
+            if page.web:
+                print(
+                    f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                )
+                write_tokens_to_session(access_token, refresh_token)
+            else:
+                print(
+                    f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                )
+                write_tokens_to_session(access_token, refresh_token)
             todo_list.set_access_token(access_token)
             todo_list.set_refresh_token(refresh_token)
+            await todo_list.db_client.set_access_token(access_token, refresh_token)
         await route_change(page.route)
     else:
         show_login_view()

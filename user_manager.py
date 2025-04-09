@@ -5,15 +5,16 @@ from supabase import create_async_client, AsyncClient
 from user_storage import FileSystemUserStorage
 from dotenv import load_dotenv
 import json
+import httpx
 
 # Load environment variables
 load_dotenv()
 
-# Conditional import based on environment
+"""# Conditional import based on environment
 if "pyodide" in sys.modules:  # Running in a Pyodide (web) environment
     from pyodide.http import pyfetch  # type: ignore
 else:  # Running in a non-web environment
-    import requests
+    import requests"""
 
 print("Running in web environment:", "pyodide" in sys.modules)
 
@@ -39,30 +40,32 @@ class UserManager:
         Registers a new user with Supabase.
         """
         try:
-            # Use pyfetch for HTTP requests in the web environment
-            response = await pyfetch(
-                url=f"{self.supabase_url}/auth/v1/signup",
-                method="POST",
-                headers={
-                    "apikey": self.supabase_key,
-                    "Content-Type": "application/json",
-                },
-                body=json.dumps(
-                    {
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.supabase_url}/auth/v1/signup",
+                    json={
                         "email": username,
                         "password": password,
                         "data": {"username": username},
-                    }
-                ),
-            )
-            data = await response.json()
-            return (
-                data.get("access_token"),
-                data.get("user", {}).get("id"),
-                data.get("refresh_token"),
-            )
+                    },
+                    headers={
+                        "apikey": self.supabase_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                print(f"Register response: {data}")
+                return (
+                    data.get("access_token"),
+                    data.get("user", {}).get("id"),
+                    data.get("refresh_token"),
+                )
+        except httpx.HTTPStatusError as e:
+            print(f"Error during registration: {e.response.text}")
+            return None, None, None
         except Exception as e:
-            print(f"Error during registration (web): {e}")
+            print(f"Unexpected error during registration: {e}")
             return None, None, None
 
     async def verify_user(self, email, password):
@@ -70,28 +73,30 @@ class UserManager:
         Verifies a user's credentials and logs them in.
         """
         try:
-            response = await pyfetch(
-                url=f"{self.supabase_url}/auth/v1/token?grant_type=password",
-                method="POST",
-                headers={
-                    "apikey": self.supabase_key,
-                    "Content-Type": "application/json",
-                },
-                body=json.dumps(
-                    {
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.supabase_url}/auth/v1/token?grant_type=password",
+                    json={
                         "email": email,
                         "password": password,
-                    }
-                ),
-            )
-            data = await response.json()
-            return (
-                data.get("access_token"),
-                data.get("user", {}).get("id"),
-                data.get("refresh_token"),
-            )
+                    },
+                    headers={
+                        "apikey": self.supabase_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                return (
+                    data.get("access_token"),
+                    data.get("user", {}).get("id"),
+                    data.get("refresh_token"),
+                )
+        except httpx.HTTPStatusError as e:
+            print(f"Error during login: {e.response.text}")
+            return None, None, None
         except Exception as e:
-            print(f"Error during login (web): {e}")
+            print(f"Unexpected error during login: {e}")
             return None, None, None
 
     def get_access_token(self, username):

@@ -1,124 +1,162 @@
 # c:\Users\nrmlc\OneDrive\Desktop\Reward_Yourself_ToDO\reward_view.py
 import flet as ft
 from todo_view import ToDoList
-import httpx
-from dotenv import load_dotenv
 import os
-import asyncio  # Keep asyncio for create_task if needed, but page.run_task is preferred
-
-load_dotenv()
-
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")  # Replace with your actual Supabase key
 
 
-def reward_view(page: ft.Page, todo_list: ToDoList):
-    reward_list = ft.ListView(expand=True, spacing=10, padding=20, auto_scroll=True)
+# --- Update function signature ---
+def reward_view(
+    page: ft.Page, todo_list: ToDoList, trigger_main_medal_update: callable
+):
+    # --- End modification ---
 
-    async def refresh_reward_list():
-        reward_list.controls.clear()
-        if todo_list:
-            rewards = await todo_list.get_all_rewards()
-            print(f"Fetched Rewards: {rewards}")  # Debugging
+    reward_list_view = ft.ListView(
+        expand=True, spacing=10, padding=20, auto_scroll=True
+    )
+    reward_input = ft.TextField(label="New Reward", expand=True)
+    medal_cost_input = ft.TextField(
+        label="Medal Cost",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        expand=True,
+        input_filter=ft.InputFilter(
+            allow=True, regex_string=r"[0-9]", replacement_string=""
+        ),
+    )
+
+    # --- Modify refresh_reward_list ---
+    def refresh_reward_list():
+        """Refreshes the list of rewards."""
+        reward_list_view.controls.clear()
+        if not todo_list:
+            reward_list_view.controls.append(ft.Text("Error: Not logged in."))
+            # page.update() # Let caller handle update
+            return
+
+        print("Refreshing reward list...")
+        # No need to fetch medals just for button state anymore
+
+        rewards = todo_list.get_all_rewards()
+
+        if rewards:
             for reward in rewards:
-                reward_id = reward["id"]
-                reward_name = reward["reward"]
-                cost = reward["medal_cost"]
-                print(
-                    f"Processing reward: {reward_name} (ID: {reward_id})"
-                )  # Debugging
-
-                # Define the handler function separately for clarity and proper async handling
-                async def handle_claim_change(e, rid=reward_id, rname=reward_name):
-                    # Only claim if the checkbox is being checked (value becomes True)
-                    if e.control.value:
-                        print(
-                            f"Checkbox checked for reward: {rname} (ID: {rid})"
-                        )  # Debugging
-                        await claim_reward(rid, rname)
-                        # The refresh_reward_list called by claim_reward will update the UI
-                        # No need to manually set value back to False here if refresh works
-                    else:
-                        print(
-                            f"Checkbox unchecked for reward: {rname} (ID: {rid})"
-                        )  # Debugging
-
-                reward_list.controls.append(
-                    ft.Checkbox(
-                        label=f"{reward_name} - {cost} medals",
-                        value=False,  # Start unchecked
-                        # Use page.run_task to correctly schedule the async handler
-                        on_change=lambda e, rid=reward_id, rname=reward_name: page.run_task(
-                            handle_claim_change, e, rid, rname
-                        ),
+                reward_id, reward_name, cost = (
+                    reward.get("id"),
+                    reward.get("reward", "Unnamed"),
+                    reward.get("medal_cost", 0),
+                )
+                if reward_id is None:
+                    continue
+                reward_list_view.controls.append(
+                    ft.Row(
+                        [
+                            ft.Text(
+                                f"{reward_name} - {cost} medals",
+                                expand=True,
+                                tooltip=reward_name,
+                            ),
+                            ft.ElevatedButton(
+                                "Claim",
+                                tooltip=f"Claim for {cost} medals",
+                                on_click=lambda _, rid=reward_id, rname=reward_name, rcost=cost: claim_reward(
+                                    rid, rname, rcost
+                                ),
+                                # --- Remove disabled logic ---
+                                # disabled=(cost > effective_medals), # ALWAYS ENABLED NOW
+                                # --- End Remove ---
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     )
                 )
-            page.update()
+        else:
+            reward_list_view.controls.append(ft.Text("No rewards available."))
+        # Don't call page.update() here, let the caller handle it
+        # page.update()
 
-    async def add_reward(e):
+    # --- End modification ---
+
+    def add_reward(e):
+        """Handles adding a new reward."""
         if todo_list:
-            if reward_input.value and medal_cost_input.value.isdigit():
-                print(f"Reward Input: {reward_input.value}")  # Debugging
-                print(f"Medal Cost Input: {medal_cost_input.value}")  # Debugging
-                await todo_list.add_new_reward(
-                    {
-                        "username": todo_list.username,
-                        "reward": reward_input.value,
-                        "medal_cost": int(medal_cost_input.value),
-                    }
-                )
-                print("add_new_reward called successfully!")  # Debugging
-                reward_input.value = ""
-                medal_cost_input.value = ""
-                await refresh_reward_list()
+            reward_text = reward_input.value.strip()
+            cost_text = medal_cost_input.value.strip()
+            if reward_text and cost_text.isdigit():
+                cost = int(cost_text)
+                new_reward_data = {"reward": reward_text, "medal_cost": cost}
+                added_reward = todo_list.add_new_reward(new_reward_data)
+                if added_reward:
+                    reward_input.value = ""
+                    medal_cost_input.value = ""
+                    reward_input.focus()
+                    refresh_reward_list()  # Refresh list
+                    page.snack_bar = ft.SnackBar(ft.Text("Reward added!"))
+                    page.snack_bar.open = True
+                else:
+                    page.snack_bar = ft.SnackBar(ft.Text("Error adding reward."))
+                    page.snack_bar.open = True
+                page.update()  # Update page after add action
             else:
-                print("Invalid input for reward or medal cost.")  # Debugging
                 page.snack_bar = ft.SnackBar(
-                    ft.Text("Please enter a valid reward and medal cost.")
+                    ft.Text("Please enter a valid reward and numeric medal cost.")
                 )
                 page.snack_bar.open = True
-                page.update()
+                if not reward_text:
+                    reward_input.focus()
+                else:
+                    medal_cost_input.focus()
+                page.update()  # Update page for validation error
+        else:
+            print("Error: todo_list not available in add_reward.")
 
-    # This function now delegates the work to the ToDoList object's method
-    async def claim_reward(reward_id, reward_name):
+    # --- Modify claim_reward ---
+    def claim_reward(reward_id, reward_name, reward_cost):
+        """Event handler for the claim button."""
         print(
-            f"Attempting to claim reward via todo_list: {reward_name} (ID: {reward_id})"
-        )  # Debugging
+            f"Attempting to claim reward via UI: {reward_name} (ID: {reward_id}), Cost: {reward_cost}"
+        )
         if todo_list:
-            try:
-                # *** This is the key change: Call the method on todo_list ***
-                await todo_list.claim_reward(reward_id, reward_name)
-                print(
-                    f"todo_list.claim_reward likely succeeded for {reward_name}"
-                )  # Debugging
-                # Refresh the list to show the reward is gone
-                await refresh_reward_list()
-            except Exception as e:
-                # Log the error appropriately
-                print(
-                    f"An error occurred while claiming reward '{reward_name}' (ID: {reward_id}): {e}"
+            # Backend handles the actual medal check now
+            success, result_data = todo_list.claim_reward(
+                reward_id, reward_name, reward_cost
+            )
+
+            message = ""
+            if success:
+                new_count = (
+                    result_data  # This is the new medal count (or None if RPC failed)
                 )
-                # Show an error message to the user
-                page.snack_bar = ft.SnackBar(ft.Text(f"Error claiming reward: {e}"))
-                page.snack_bar.open = True
-                # You might want to refresh the list even on error, or maybe not.
-                # await refresh_reward_list()
-                page.update()  # Update to show the snackbar
+                message = f"Reward '{reward_name}' claimed!"
+                if new_count is None:
+                    message = f"Reward '{reward_name}' claimed! (Medal update may have failed, refreshing count...)"
+                print(f"Claim successful: {message}")
+                refresh_reward_list()  # Refresh list only on success
+            else:
+                error_message = result_data  # This is the error message
+                message = f"Claim failed: {error_message}"
+                print(message)
+                # Don't refresh list on failure
+
+            page.snack_bar = ft.SnackBar(ft.Text(message))
+            page.snack_bar.open = True
+
+            # --- Trigger update of the main medal display ---
+            trigger_main_medal_update()  # Call the function passed from main.py
+            # --- End modification ---
+
+            page.update()  # Show snackbar and update list/display changes
         else:
             print("Error: todo_list object not available when trying to claim reward.")
-            page.snack_bar = ft.SnackBar(
-                ft.Text("Error: Cannot claim reward. System error.")
-            )
+            page.snack_bar = ft.SnackBar(ft.Text("Error: Not logged in."))
             page.snack_bar.open = True
             page.update()
 
-    reward_input = ft.TextField(label="New Reward", expand=True)
-    medal_cost_input = ft.TextField(
-        label="Medal Cost", keyboard_type=ft.KeyboardType.NUMBER, expand=True
-    )
+    # --- End modification ---
+
     add_reward_button = ft.ElevatedButton("Add Reward", on_click=add_reward)
 
-    # Initial population of the list
-    page.run_task(refresh_reward_list)
+    # --- Initial population (No medal fetch needed here anymore) ---
+    refresh_reward_list()
+    # --- End modification ---
 
     return ft.View(
         "/rewards",
@@ -126,8 +164,13 @@ def reward_view(page: ft.Page, todo_list: ToDoList):
             ft.AppBar(
                 title=ft.Text("Rewards"),
                 leading=ft.IconButton(
-                    icon=ft.Icons.ARROW_BACK, on_click=lambda _: page.go("/")
+                    icon=ft.icons.ARROW_BACK,
+                    tooltip="Back to Tasks",
+                    on_click=lambda _: page.go("/"),
                 ),
+                # --- Remove local medal count display from actions ---
+                actions=[],
+                # --- End modification ---
             ),
             ft.Column(
                 [
@@ -135,9 +178,16 @@ def reward_view(page: ft.Page, todo_list: ToDoList):
                         [reward_input, medal_cost_input, add_reward_button],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     ),
-                    reward_list,  # The ListView containing checkboxes
+                    ft.Divider(height=10, color=ft.colors.TRANSPARENT),
+                    ft.Text(
+                        "Available Rewards", style=ft.TextThemeStyle.HEADLINE_SMALL
+                    ),
+                    reward_list_view,
                 ],
                 expand=True,
+                scroll=ft.ScrollMode.ADAPTIVE,
             ),
+            # bottom_appbar should be added by main.py's route_change
         ],
+        padding=10,
     )

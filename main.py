@@ -1,571 +1,798 @@
-import asyncio
+# c:\Users\nrmlc\OneDrive\Desktop\Reward_Yourself_ToDO\main.py
 import flet as ft
 import os
 import sys
 import json
 from calendar_view import build_calendar
-from database import Database
-from todo_view import ToDoList
-from user_manager import UserManager
+from todo_view import ToDoList, MEDALS_PER_TASK
+from user_manager import UserManager  # Keep UserManager import for its own use
 from reward_view import reward_view
 from history_view import history_view
 import arrow
 import time
-from dotenv import load_dotenv
-
-load_dotenv()
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+import config_loader
 
 
+# --- Session file handling (unchanged) ---
 def read_tokens_from_session():
-    """
-    Reads the access_token and refresh_token from session.json.
-    """
+    """Reads the access_token and refresh_token from session.json."""
     try:
         with open("session.json", "r") as file:
-            session_data = json.load(file)
+            content = file.read()
+            if not content:
+                return None, None
+            session_data = json.loads(content)
             access_token = session_data.get("access_token")
             refresh_token = session_data.get("refresh_token")
-            return access_token, refresh_token
+            if isinstance(access_token, str) and isinstance(refresh_token, str):
+                return access_token, refresh_token
+            else:
+                print("Invalid token format found in session.json.")
+                return None, None
     except FileNotFoundError:
-        print("session.json not found.")
         return None, None
     except json.JSONDecodeError:
         print("Error decoding session.json.")
         return None, None
+    except Exception as e:
+        print(f"Error reading session.json: {e}")
+        return None, None
 
 
 def write_tokens_to_session(access_token, refresh_token):
-    """
-    Writes the access_token and refresh_token to session.json.
-    """
+    """Writes the access_token and refresh_token to session.json."""
+    if not isinstance(access_token, str) or not isinstance(refresh_token, str):
+        print("Error: Attempted to write non-string tokens to session.json.")
+        return
     try:
         with open("session.json", "w") as file:
             json.dump(
                 {"access_token": access_token, "refresh_token": refresh_token}, file
             )
+        print("Tokens written to session.json.")
     except Exception as e:
         print(f"Error writing to session.json: {e}")
 
 
-async def main(page: ft.Page):
-    global pyfetch  # Declare pyfetch as global to use it throughout the app
+# --- Main Application Function ---
+def main(page: ft.Page):
+    if config_loader.CONFIG_ERROR:
+        page.add(
+            ft.Column(
+                [
+                    ft.Text(
+                        "Application Configuration Error", size=20, color=ft.colors.RED
+                    ),
+                    ft.Text(config_loader.CONFIG_ERROR),
+                    ft.Text("Please check config.json and build includes."),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        )
+        page.update()
+        return
 
     page.title = "Reward Yourself"
-    page.horizontal_alignment = page.vertical_alignment = "center"
-    file_picker = ft.FilePicker()
-    user_manager = UserManager(page)
-    todo_list = None
-    username = None
+    page.horizontal_alignment = ft.MainAxisAlignment.CENTER
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.theme_mode = ft.ThemeMode.SYSTEM
+
+    # --- State Variables ---
+    user_manager = UserManager(page)  # Initialize UserManager
+    todo_list: ToDoList = None
+    username: str = None
     selected_due_date = None
     is_web_environment = page.web
+    # --- Central UI element for medal display ---
+    current_medal_count_display_main = ft.Text(
+        "Medals: -", tooltip="Your current medal balance"
+    )
+    # --- End modification ---
 
-    def handle_change(e):
-        nonlocal selected_due_date
-        selected_due_date = e.control.value
-        page.add(ft.Text(f"Date changed: {e.control.value.strftime('%Y-%m-%d')}"))
+    # --- UI Elements (Shared/Persistent) ---
+    file_picker = ft.FilePicker()
+    page.overlay.append(file_picker)
 
-    def handle_dismissal(e):
-        page.add(ft.Text(f"DatePicker dismissed."))
-
-    async def _get_tokens(username=None):
-        """Retrieves tokens based on the environment."""
-        if page.web:  # Web environment
+    # --- Token Management (unchanged) ---
+    def _get_tokens():
+        if page.web:
             try:
                 access_token = page.client_storage.get("access_token")
                 refresh_token = page.client_storage.get("refresh_token")
                 if not access_token or not refresh_token:
-                    print("Tokens not found in client storage.")
                     return None, None
-                return access_token, refresh_token
-            except TimeoutError:
-                print("Error: Unable to retrieve tokens from client storage.")
+                if isinstance(access_token, str) and isinstance(refresh_token, str):
+                    return access_token, refresh_token
+                else:
+                    page.client_storage.remove("access_token")
+                    page.client_storage.remove("refresh_token")
+                    return None, None
+            except Exception as e:
+                print(f"Error retrieving tokens from client storage: {e}")
                 return None, None
-        else:  # Non-web environment
-            # Read tokens from session.json
-            access_token, refresh_token = read_tokens_from_session()
-            return access_token, refresh_token
+        else:
+            return read_tokens_from_session()
 
-    async def check_login():
-        username = None
-        access_token, refresh_token = await _get_tokens()
-
-        if not access_token or not refresh_token:
-            return False, False, False, False
-
-        if not isinstance(access_token, str):
-            return False, False, False, False
-        if not isinstance(refresh_token, str):
-            return False, False, False, False
-
-        supabase = await user_manager.get_supabase_client()
-        try:
-            user = await supabase.auth.get_user(access_token)
-        except Exception as e:
+    def _clear_tokens():
+        print("Clearing stored tokens...")
+        if page.web:
+            page.client_storage.remove("access_token")
+            page.client_storage.remove("refresh_token")
+        else:
             try:
-                response = await supabase.auth.refresh_session(refresh_token)
-                if response.session:
-                    access_token = response.session.access_token
-                    refresh_token = response.session.refresh_token
+                if os.path.exists("session.json"):
+                    os.remove("session.json")
+                    print("Removed session.json.")
+            except OSError as e:
+                print(f"Error removing session.json: {e}")
 
-                    user = await supabase.auth.get_user(access_token)
-                    if page.web:
+    def _store_tokens(acc_token, ref_token):
+        print("Storing tokens...")
+        if page.web:
+            page.client_storage.set("access_token", acc_token)
+            page.client_storage.set("refresh_token", ref_token)
+        else:
+            write_tokens_to_session(acc_token, ref_token)
+
+    # --- Central Medal Count Update Function ---
+    def update_main_medal_display(new_count: int | None = None):
+        """Fetches medal count if needed and updates the main view's UI text.
+        Does NOT call page.update()."""
+        display_value = "Medals: Error"
+        count_to_display = None
+
+        if new_count is not None:
+            print(f"Updating main medal display with provided count: {new_count}")
+            count_to_display = new_count
+        elif todo_list:  # Fetch only if not provided and logged in
+            print("Fetching medal count for main display update...")
+            fetched_count = todo_list.get_medal_count()  # Synchronous call
+            if fetched_count is not None:
+                count_to_display = fetched_count
+            else:
+                print("Failed to fetch medal count.")  # Keep error message
+
+        if count_to_display is not None:
+            display_value = f"Medals: {count_to_display}"
+        elif not todo_list:  # Handle case where user is logged out
+            display_value = "Medals: N/A"
+        # else: display_value remains "Medals: Error" if fetch failed
+
+        current_medal_count_display_main.value = display_value
+        # Let the caller decide when to call page.update()
+        print(f"Main medal display updated to: {display_value}")
+
+    # --- End modification ---
+
+    # --- Authentication Logic ---
+    def check_login():
+        """Checks login status, initializes ToDoList, returns True if logged in."""
+        nonlocal username, todo_list
+        access_token, refresh_token = _get_tokens()
+        if not access_token or not refresh_token:
+            return False
+
+        supabase_client = user_manager.get_supabase_client()
+        if not supabase_client:
+            _clear_tokens()
+            return False
+
+        try:
+            print("check_login: Verifying token...")
+            try:
+                # Set session for subsequent client calls (like get_user)
+                supabase_client.auth.set_session(access_token, refresh_token)
+            except Exception as e:
+                print(f"Error setting session: {e}")
+                _clear_tokens()
+                return False
+
+            user_response = supabase_client.auth.get_user()
+            user = user_response.user
+            if user:
+                print(f"check_login: Token valid for user ID: {user.id}")
+                # Try getting username from metadata first (set during signup or profile update)
+                stored_username = user.user_metadata.get("username")
+                if stored_username:
+                    username = stored_username
+                elif user.email and "@placeholder.com" in user.email:
+                    # Fallback to extracting from email if metadata username is missing
+                    username = user.email.split("@")[0]
+                else:
+                    # Further fallback if email format is unexpected
+                    print(
+                        "Warning: Could not determine username from metadata or email."
+                    )
+                    username = f"User_{user.id[:5]}"
+
+                if not todo_list:
+                    # --- Remove user_manager argument ---
+                    todo_list = ToDoList(username, is_web_environment, supabase_client)
+                elif (
+                    not todo_list.supabase_client
+                ):  # Ensure client is set if todo_list existed
+                    todo_list.supabase_client = supabase_client
+                # --- Remove user_manager assignment ---
+                # if not hasattr(todo_list, 'user_manager') or not todo_list.user_manager:
+                #     todo_list.user_manager = user_manager
+                # --- End modification ---
+                todo_list.user_id = user.id  # Set user_id here
+                todo_list.set_access_token(
+                    access_token, refresh_token
+                )  # Ensure ToDoList has tokens
+                _store_tokens(
+                    access_token, refresh_token
+                )  # Store potentially refreshed tokens
+                # --- Trigger initial medal update after successful login/validation ---
+                update_main_medal_display()
+                # --- End modification ---
+                return True  # Successfully logged in
+            else:
+                # This case might indicate an issue with get_user despite set_session working
+                print("check_login: set_session succeeded but get_user failed.")
+                _clear_tokens()
+                return False
+
+        except Exception as e:
+            print(f"check_login: Token invalid/expired ({e}). Attempting refresh...")
+            try:
+                print("check_login: Attempting explicit refresh...")
+                refresh_response = supabase_client.auth.refresh_session()
+                if not refresh_response or not refresh_response.session:
+                    print("check_login: Explicit refresh failed.")
+                    _clear_tokens()
+                    return False
+
+                print("check_login: Explicit refresh successful, getting user again...")
+                user_response_after_refresh = supabase_client.auth.get_user()
+                user = user_response_after_refresh.user
+
+                if user:
+                    print("check_login: Refresh successful and token still valid.")
+                    current_session = supabase_client.auth.get_session()
+                    if not current_session:
                         print(
-                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                            "Error: User found but session is missing after successful refresh."
                         )
-                        write_tokens_to_session(access_token, refresh_token)
+                        _clear_tokens()
+                        return False
+
+                    new_access_token = current_session.access_token
+                    new_refresh_token = current_session.refresh_token
+
+                    # Try getting username from metadata first
+                    stored_username = user.user_metadata.get("username")
+                    if stored_username:
+                        username = stored_username
+                    elif user.email and "@placeholder.com" in user.email:
+                        username = user.email.split("@")[0]
                     else:
                         print(
-                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
+                            "Warning: Could not determine username from metadata or email after refresh."
                         )
-                        write_tokens_to_session(access_token, refresh_token)
+                        username = f"User_{user.id[:5]}"
+
+                    if not todo_list:
+                        # --- Remove user_manager argument ---
+                        todo_list = ToDoList(
+                            username, is_web_environment, supabase_client
+                        )
+                    elif not todo_list.supabase_client:
+                        todo_list.supabase_client = supabase_client
+                    # --- Remove user_manager assignment ---
+                    # if not hasattr(todo_list, 'user_manager') or not todo_list.user_manager:
+                    #     todo_list.user_manager = user_manager
+                    # --- End modification ---
+                    todo_list.user_id = user.id  # Set user_id here
+                    todo_list.set_access_token(new_access_token, new_refresh_token)
+                    _store_tokens(new_access_token, new_refresh_token)
+                    # --- Trigger initial medal update after successful refresh ---
+                    update_main_medal_display()
+                    # --- End modification ---
+                    return True  # Successfully refreshed and logged in
                 else:
-                    return False, False, False, False
+                    print("check_login: Refresh succeeded but get_user still failed.")
+                    _clear_tokens()
+                    return False
+            except Exception as refresh_e:
+                print(f"check_login: Error during refresh attempt: {refresh_e}")
+                _clear_tokens()
+                return False
+
+    def perform_login(login_username, password, error_text_control):
+        """Handles the login process."""
+        nonlocal username, todo_list
+        error_text_control.value = ""  # Clear previous errors
+        page.update()
+
+        if not login_username or not password:
+            error_text_control.value = "Please enter username and password."
+            page.update()
+            return
+
+        access_token, user_id, refresh_token = user_manager.verify_user(
+            login_username, password
+        )
+        if access_token and user_id and refresh_token:
+            username = login_username  # Use the provided login username
+            supabase_client = user_manager.get_supabase_client()
+            if not supabase_client:
+                error_text_control.value = "Error initializing application services."
+                page.update()
+                return
+
+            # Initialize ToDoList
+            # --- Remove user_manager argument ---
+            todo_list = ToDoList(username, is_web_environment, supabase_client)
+            # --- End modification ---
+            todo_list.set_access_token(access_token, refresh_token)
+            todo_list.user_id = user_id  # Set user_id here
+            _store_tokens(access_token, refresh_token)
+
+            # Set session in the client *after* successful login
+            try:
+                supabase_client.auth.set_session(access_token, refresh_token)
+                print("Session set in client after login.")
             except Exception as e:
-                return False, False, False, False
+                print(f"Error setting session after login: {e}")
 
-        if user:
-            print(f"Access Token: {access_token}")
-            print(f"Refresh Token: {refresh_token}")
-            return (
-                user.user.user_metadata["username"],
-                user.user.id,
-                access_token,
-                refresh_token,
-            )
-        return False, False, False, False
+            page.go("/")
+        else:
+            error_text_control.value = "Login failed. Check username/password."
+            _clear_tokens()
+            page.update()
 
-    def show_login_view():
-        page.views.clear()
-        username_input = ft.TextField(label="Username")
-        password_input = ft.TextField(
-            label="Password", password=True, can_reveal_password=True
-        )
-        error_text = ft.Text("", color=ft.Colors.RED)
-
-        async def login(e):
-            nonlocal username, todo_list, access_token, refresh_token
-            username = username_input.value
-            password = password_input.value
-            access_token, user_id, refresh_token = await user_manager.verify_user(
-                username, password
-            )
-            if access_token and refresh_token:
-                todo_list = ToDoList(username=username, is_web_environment=page.web)
-                await todo_list.create_db_client()  # Ensure db_client is initialized
-                todo_list.set_access_token(access_token, refresh_token)
-                todo_list.set_user_id(user_id)
-                todo_list.set_refresh_token(refresh_token)
-                todo_list.set_access_token(access_token, refresh_token)
-                if page.web:
-                    print(
-                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                    )
-                    write_tokens_to_session(access_token, refresh_token)
-                else:
-                    print(
-                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                    )
-                    write_tokens_to_session(access_token, refresh_token)
-                page.views.clear()
-                page.go("/")
-            else:
-                error_text.value = "Invalid username or password."
-                page.update()
-
-        page.views.append(
-            ft.View(
-                "/login",
-                [
-                    ft.AppBar(title=ft.Text("Login")),
-                    ft.Column(
-                        [
-                            username_input,
-                            password_input,
-                            ft.ElevatedButton("Login", on_click=login),
-                            ft.TextButton(
-                                "Register", on_click=lambda _: page.go("/register")
-                            ),
-                            error_text,
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                ],
-            )
-        )
+    def perform_registration(reg_username, password, error_text_control):
+        """Handles the registration process."""
+        nonlocal username, todo_list
+        error_text_control.value = ""  # Clear previous errors
         page.update()
 
-    def show_register_view(route):
-        page.views.clear()
+        if not reg_username or not password:
+            error_text_control.value = "Please enter username and password."
+            page.update()
+            return
+        if len(password) < 6:
+            error_text_control.value = "Password must be at least 6 characters."
+            page.update()
+            return
 
-        async def register(e):
-            access_token, user_id, refresh_token = await user_manager.register_user(
-                register_username.value, register_password.value
-            )
-
-            if (
-                access_token
-                and refresh_token
-                and isinstance(access_token, str)
-                and isinstance(refresh_token, str)
-            ):
-                nonlocal username, todo_list
-                username = register_username.value
-                todo_list = ToDoList(username=username, is_web_environment=page.web)
-                await todo_list.create_db_client()  # Ensure db_client is initialized
-                if todo_list.db_client:  # Check if db_client is initialized
-                    await todo_list.db_client.set_access_token(
-                        access_token, refresh_token
-                    )
-                todo_list.set_user_id(user_id)
-                todo_list.set_refresh_token(refresh_token)
-                todo_list.set_access_token(access_token)
-                if page.web:
-                    print(
-                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                    )
-                    write_tokens_to_session(access_token, refresh_token)
-                else:
-                    print(
-                        f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                    )
-                    write_tokens_to_session(access_token, refresh_token)
-
-                # Redirect to the ToDo view after successful registration
-                page.views.clear()
-                await show_main_view()  # Call the function to show the ToDo view
-                page.update()
-            else:
-                page.snack_bar = ft.SnackBar(
-                    ft.Text("Username already taken or invalid.")
+        access_token, user_id, refresh_token = user_manager.register_user(
+            reg_username, password
+        )
+        if access_token and user_id and refresh_token:
+            username = reg_username  # Use the provided registration username
+            supabase_client = user_manager.get_supabase_client()
+            if not supabase_client:
+                error_text_control.value = (
+                    "Error initializing application services after registration."
                 )
-                page.snack_bar.open = True
                 page.update()
+                return
 
-        register_username = ft.TextField(label="Username")
-        register_password = ft.TextField(
-            label="Password", password=True, can_reveal_password=True
-        )
+            # Initialize ToDoList
+            # --- Remove user_manager argument ---
+            todo_list = ToDoList(username, is_web_environment, supabase_client)
+            # --- End modification ---
+            todo_list.set_access_token(access_token, refresh_token)
+            todo_list.user_id = user_id  # Set user_id here
+            _store_tokens(access_token, refresh_token)
 
-        def back_to_login(e):
-            page.go("/login")
+            # Set session in the client *after* successful registration
+            try:
+                supabase_client.auth.set_session(access_token, refresh_token)
+                print("Session set in client after registration.")
+            except Exception as e:
+                print(f"Error setting session after registration: {e}")
 
-        page.views.append(
-            ft.View(
-                "/register",
-                [
-                    register_username,
-                    register_password,
-                    ft.ElevatedButton("Register", on_click=register),
-                    ft.TextButton("Back to Login", on_click=back_to_login),
-                ],
+            page.go("/")
+        else:
+            error_text_control.value = (
+                "Registration failed. User might already exist or invalid input."
             )
-        )
-        page.update()
+            _clear_tokens()
+            page.update()
 
-    async def show_main_view():
-        page.views.clear()
+    def perform_logout():
+        """Logs the user out and clears session."""
+        nonlocal username, todo_list
+        print("Performing logout...")
+        supabase_client = user_manager.get_supabase_client()
+        if supabase_client:
+            try:
+                supabase_client.auth.sign_out()
+                print("Signed out from Supabase.")
+            except Exception as e:
+                print(f"Error during Supabase sign out: {e}")
+
+        _clear_tokens()
+        username = None
+        todo_list = None
+        current_medal_count_display_main.value = "Medals: N/A"
+        page.go("/login")
+
+    # --- View Definitions ---
+    def show_login_view():
+        username_input = ft.TextField(
+            label="Username", autofocus=True, on_submit=lambda e: password_input.focus()
+        )
+        password_input = ft.TextField(
+            label="Password",
+            password=True,
+            can_reveal_password=True,
+            on_submit=lambda e: perform_login(
+                username_input.value.strip(),
+                password_input.value,
+                error_text,
+            ),
+        )
+        error_text = ft.Text("", color=ft.colors.RED)
+        return ft.View(
+            "/login",
+            [
+                ft.AppBar(title=ft.Text("Login"), automatically_imply_leading=False),
+                ft.Column(
+                    [
+                        username_input,
+                        password_input,
+                        ft.ElevatedButton(
+                            "Login",
+                            on_click=lambda e: perform_login(
+                                username_input.value.strip(),
+                                password_input.value,
+                                error_text,
+                            ),
+                        ),
+                        ft.TextButton(
+                            "Register", on_click=lambda _: page.go("/register")
+                        ),
+                        error_text,
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=20,
+                    width=300,
+                ),
+            ],
+            vertical_alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def show_register_view():
+        register_username = ft.TextField(
+            label="Username",
+            autofocus=True,
+            on_submit=lambda e: register_password.focus(),
+        )
+        register_password = ft.TextField(
+            label="Password (min 6 chars)",
+            password=True,
+            can_reveal_password=True,
+            on_submit=lambda e: perform_registration(
+                register_username.value.strip(),
+                register_password.value,
+                error_text,
+            ),
+        )
+        error_text = ft.Text("", color=ft.colors.RED)
+        return ft.View(
+            "/register",
+            [
+                ft.AppBar(title=ft.Text("Register")),
+                ft.Column(
+                    [
+                        register_username,
+                        register_password,
+                        ft.ElevatedButton(
+                            "Register",
+                            on_click=lambda e: perform_registration(
+                                register_username.value.strip(),
+                                register_password.value,
+                                error_text,
+                            ),
+                        ),
+                        error_text,
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=20,
+                    width=300,
+                ),
+            ],
+            vertical_alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def show_main_view():
+        """Builds and displays the main ToDo view."""
         nonlocal selected_due_date
 
         calendar_container = ft.Container(content=build_calendar(page), padding=10)
-        task_input = ft.TextField(label="New Task", expand=True)
-        reward_input = ft.TextField(label="New Reward", expand=True)
-        medal_cost_input = ft.TextField(
-            label="Medal Cost", keyboard_type=ft.KeyboardType.NUMBER, expand=True
+        task_input = ft.TextField(
+            label="New Task", expand=True, on_submit=lambda e: add_task(e)
         )
-        medal_count = ft.Text(f"You have {0} medals.")
+        task_list_view = ft.ListView(expand=True, spacing=5, auto_scroll=True)
+        selected_date_text = ft.Text("Due Date: None")
 
-        task_list = ft.Column()
-        reward_list = ft.Column()
+        def handle_date_change_main(e):
+            nonlocal selected_due_date
+            selected_due_date = e.control.value
+            selected_date_text.value = (
+                f"Due: {selected_due_date.strftime('%Y-%m-%d')}"
+                if selected_due_date
+                else "Due Date: None"
+            )
+            page.update()
 
-        async def update_task_list():
-            task_list.controls.clear()
-            if todo_list:
-                tasks = await todo_list.get_all_tasks()
+        def handle_date_dismissal_main(e):
+            print("DatePicker dismissed.")
+
+        def update_task_list():
+            task_list_view.controls.clear()
+            if not todo_list:
+                task_list_view.controls.append(ft.Text("Error: Not logged in."))
+                return
+            tasks = todo_list.get_all_tasks()
+            if tasks:
                 for task in tasks:
-                    task_id = task["id"]
-                    task_name = task["task"]
-                    done = task["done"]
-                    due_date = task.get("due_date", "None")
-                    task_list.controls.append(
-                        ft.Checkbox(
-                            label=f"{task_name} (Due: {due_date})",
-                            value=done,
-                            on_change=lambda e, task_id=task_id, task_name=task_name: page.run_task(
-                                mark_done, task_id, task_name
-                            ),
+                    task_id, task_name, due_date_str = (
+                        task.get("id"),
+                        task.get("task", "Unnamed"),
+                        task.get("due_date"),
+                    )
+                    if task_id is None:
+                        continue
+                    due_date_display = f" (Due: {due_date_str})" if due_date_str else ""
+                    task_list_view.controls.append(
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    f"{task_name}{due_date_display}",
+                                    expand=True,
+                                    tooltip=task_name,
+                                ),
+                                ft.IconButton(
+                                    ft.icons.CHECK_CIRCLE_OUTLINE,
+                                    tooltip="Mark as Done",
+                                    on_click=lambda _, tid=task_id, tname=task_name: mark_done(
+                                        tid, tname
+                                    ),
+                                    icon_color=ft.colors.GREEN_ACCENT_700,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         )
                     )
+            else:
+                task_list_view.controls.append(ft.Text("No tasks yet!"))
 
-                page.update()
-
-        async def update_reward_list():
-            reward_list.controls.clear()
+        def mark_done(task_id, task_name):
+            print(f"Marking task done: ID={task_id}, Name={task_name}")
             if todo_list:
-                rewards = await todo_list.get_all_rewards()
-                print(f"Fetched Rewards: {rewards}")  # Debugging
-                for reward in rewards:
-                    reward_id = reward["id"]
-                    reward_name = reward["reward"]
-                    cost = reward["medal_cost"]
-                    reward_list.controls.append(
-                        ft.Checkbox(
-                            label=f"{reward_name} - {cost} medals",
-                            value=False,
-                            on_change=lambda e, reward_id=reward_id, reward_name=reward_name: asyncio.create_task(
-                                claim_reward(reward_id, reward_name)
-                            ),
+                success, returned_new_count = todo_list.mark_task_done(
+                    task_id, task_name
+                )
+                if success:
+                    page.snack_bar = ft.SnackBar(
+                        ft.Text(
+                            f"Task '{task_name}' completed! (+{MEDALS_PER_TASK} Medals)"
                         )
                     )
+                    page.snack_bar.open = True
+                    update_task_list()
+                    update_main_medal_display(new_count=returned_new_count)
+                else:
+                    page.snack_bar = ft.SnackBar(
+                        ft.Text("Error completing task or updating medals.")
+                    )
+                    page.snack_bar.open = True
                 page.update()
+            else:
+                print("Error: todo_list not available in mark_done.")
 
-        async def mark_done(task_id, task_name):
-            if todo_list:
-                await todo_list.mark_task_done(task_id, task_name)
-                await update_task_list()
-
-        async def add_task(e):
+        def add_task(e):
             nonlocal selected_due_date
             if todo_list:
-                if task_input.value:
+                task_text = task_input.value.strip()
+                if task_text:
                     due_date_str = (
                         selected_due_date.strftime("%Y-%m-%d")
                         if selected_due_date
                         else None
                     )
-                    await todo_list.add_new_task(
-                        {
-                            "username": username,
-                            "task": task_input.value,
-                            "done": False,
-                            "due_date": due_date_str,
-                        }
-                    )
-                    task_input.value = ""
-                    selected_due_date = None
-                    await update_task_list()
+                    new_task_data = {
+                        "task": task_text,
+                        "done": False,
+                        "due_date": due_date_str,
+                    }
+                    added_task = todo_list.add_new_task(new_task_data)
+                    if added_task:
+                        task_input.value = ""
+                        selected_due_date = None
+                        selected_date_text.value = "Due Date: None"
+                        task_input.focus()
+                        update_task_list()
+                        page.snack_bar = ft.SnackBar(ft.Text("Task added!"))
+                        page.snack_bar.open = True
+                    else:
+                        page.snack_bar = ft.SnackBar(ft.Text("Error adding task."))
+                        page.snack_bar.open = True
+                    page.update()
                 else:
                     page.snack_bar = ft.SnackBar(ft.Text("Please enter a task."))
                     page.snack_bar.open = True
+                    task_input.focus()
                     page.update()
+            else:
+                print("Error: todo_list not available in add_task.")
 
-        """async def add_reward(e):
-            if todo_list:
-                if reward_input.value and medal_cost_input.value.isdigit():
-                    await todo_list.add_new_reward(
-                        {
-                            "username": username,
-                            "reward": reward_input.value,
-                            "medal_cost": int(medal_cost_input.value),
-                        }
-                    )
-                    reward_input.value = ""
-                    medal_cost_input.value = ""
-                    await update_reward_list()
-                else:
-                    page.snack_bar = ft.SnackBar(
-                        ft.Text("Please enter valid reward details.")
-                    )
-                    page.snack_bar.open = True
-                    page.update()"""
+        update_task_list()
 
-        async def claim_reward(reward_id, reward_name):
-            print(f"Claiming reward: {reward_name} (ID: {reward_id})")  # Debugging
-            if todo_list:
-                try:
-                    await todo_list.claim_reward(reward_id, reward_name)
-                    print(f"Reward claimed successfully: {reward_name}")  # Debugging
-                    await update_reward_list()
-                except Exception as e:
-                    print(f"Error claiming reward: {e}")
-
-        page.views.append(
-            ft.View(
-                "/",
-                [
-                    ft.SafeArea(
-                        ft.Container(
-                            content=ft.ListView(
-                                controls=[
-                                    ft.Row(
-                                        [
-                                            ft.Text(
-                                                "Reward Yourself",
-                                                size=30,
-                                                weight=ft.FontWeight.BOLD,
-                                            ),
-                                        ],
-                                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                    ),
-                                    calendar_container,
-                                    ft.Column(
-                                        [
-                                            ft.Row(
-                                                [
-                                                    task_input,
-                                                    ft.ElevatedButton(
-                                                        "Pick Date",
-                                                        on_click=lambda e: page.open(
-                                                            ft.DatePicker(
-                                                                first_date=arrow.now(),
-                                                                on_change=handle_change,
-                                                                on_dismiss=handle_dismissal,
-                                                            )
-                                                        ),
-                                                    ),
-                                                    ft.ElevatedButton(
-                                                        "Add Task", on_click=add_task
-                                                    ),
-                                                ],
-                                                expand=True,
-                                            ),
-                                            ft.Container(
-                                                content=task_list, expand=True
-                                            ),
-                                            ft.Row(
-                                                [
-                                                    ft.ElevatedButton(
-                                                        "Export Data",
-                                                        on_click=lambda _: file_picker.save_file(
-                                                            allowed_extensions=["db"]
-                                                        ),
-                                                    ),
-                                                    ft.ElevatedButton(
-                                                        "Import Data",
-                                                        on_click=lambda _: file_picker.pick_files(
-                                                            allowed_extensions=["db"]
-                                                        ),
-                                                    ),
-                                                ],
-                                                expand=True,
-                                            ),
-                                        ],
-                                        expand=True,
-                                    ),
-                                ],
-                                expand=True,
+        return ft.View(
+            "/",
+            [
+                ft.AppBar(
+                    title=ft.Text("Reward Yourself - ToDo"),
+                    actions=[
+                        current_medal_count_display_main,
+                        ft.IconButton(
+                            ft.icons.REFRESH,
+                            tooltip="Refresh Medals",
+                            on_click=lambda _: (
+                                update_main_medal_display(),
+                                page.update(),
                             ),
-                            padding=10,
-                        )
-                    ),
-                    ft.BottomAppBar(
-                        bgcolor=ft.Colors.BLACK38,
-                        shape=ft.NotchShape.CIRCULAR,
-                        content=ft.Row(
-                            controls=[
-                                ft.IconButton(
-                                    icon=ft.Icons.CHECK_BOX_ROUNDED,
-                                    icon_color=ft.Colors.WHITE,
-                                    on_click=lambda _: page.go("/"),
-                                ),
-                                ft.Container(expand=True),
-                                ft.IconButton(
-                                    icon=ft.Icons.MONEY_ROUNDED,
-                                    icon_color=ft.Colors.WHITE,
-                                    on_click=lambda _: page.go("/rewards"),
-                                ),
-                                ft.IconButton(
-                                    icon=ft.Icons.HISTORY,
-                                    icon_color=ft.Colors.WHITE,
-                                    on_click=lambda _: page.go("/history"),
-                                ),
-                            ]
                         ),
-                    ),
-                ],
-            )
+                        ft.IconButton(
+                            ft.icons.LOGOUT,
+                            tooltip="Logout",
+                            on_click=lambda _: perform_logout(),
+                        ),
+                    ],
+                ),
+                ft.Column(
+                    [
+                        calendar_container,
+                        ft.Row(
+                            [
+                                task_input,
+                                ft.IconButton(
+                                    ft.icons.CALENDAR_MONTH,
+                                    tooltip="Pick Due Date",
+                                    on_click=lambda e: page.open(
+                                        ft.DatePicker(
+                                            first_date=arrow.now().datetime,
+                                            last_date=arrow.now()
+                                            .shift(years=+5)
+                                            .datetime,
+                                            help_text="Select task due date",
+                                            on_change=handle_date_change_main,
+                                            on_dismiss=handle_date_dismissal_main,
+                                        )
+                                    ),
+                                ),
+                                ft.IconButton(
+                                    ft.icons.ADD_CIRCLE,
+                                    tooltip="Add Task",
+                                    on_click=add_task,
+                                    icon_color=ft.colors.GREEN,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        selected_date_text,
+                        ft.Divider(height=10, color=ft.colors.TRANSPARENT),
+                        ft.Text("Tasks", style=ft.TextThemeStyle.HEADLINE_SMALL),
+                        task_list_view,
+                    ],
+                    expand=True,
+                    scroll=ft.ScrollMode.ADAPTIVE,
+                ),
+            ],
+            padding=10,
+            bottom_appbar=build_bottom_app_bar("/"),
         )
 
-        await update_task_list()
+    # --- Navigation ---
+    def build_bottom_app_bar(current_route):
+        return ft.BottomAppBar(
+            bgcolor=ft.colors.BLUE_GREY_700,
+            shape=ft.NotchShape.CIRCULAR,
+            content=ft.Row(
+                controls=[
+                    ft.IconButton(
+                        ft.icons.CHECK_BOX_ROUNDED,
+                        tooltip="Tasks",
+                        icon_color=ft.colors.WHITE,
+                        selected=(current_route == "/"),
+                        on_click=lambda _: page.go("/"),
+                    ),
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        ft.icons.STAR_RATE_ROUNDED,
+                        tooltip="Rewards",
+                        icon_color=ft.colors.WHITE,
+                        selected=(current_route == "/rewards"),
+                        on_click=lambda _: page.go("/rewards"),
+                    ),
+                    ft.IconButton(
+                        ft.icons.HISTORY,
+                        tooltip="History",
+                        icon_color=ft.colors.WHITE,
+                        selected=(current_route == "/history"),
+                        on_click=lambda _: page.go("/history"),
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_AROUND,
+            ),
+        )
 
-    async def route_change(route):
+    # --- Modified route_change ---
+    def route_change(route):
+        print(f"Route change requested: {page.route}")
+        current_route = page.route
         page.views.clear()
-        nonlocal todo_list, username, access_token, refresh_token
-        if not todo_list:
-            username, user_id, access_token, refresh_token = await check_login()
-            if username:
 
-                todo_list = ToDoList(username=username, is_web_environment=page.web)
-                await todo_list.create_db_client()  # Ensure db_client is initialized
-                todo_list.set_user_id(user_id)
-                todo_list.set_refresh_token(refresh_token)
-                todo_list.set_access_token(access_token)
+        is_logged_in = check_login()
 
-                if (
-                    access_token
-                    and refresh_token
-                    and isinstance(access_token, str)
-                    and isinstance(refresh_token, str)
-                ):
-                    if page.web:
-                        print(
-                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                        )
-                        write_tokens_to_session(access_token, refresh_token)
-                    else:
-                        print(
-                            f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                        )
-                        write_tokens_to_session(access_token, refresh_token)
-                    await todo_list.db_client.set_access_token(
-                        access_token, refresh_token
-                    )
-        if todo_list:
-            if page.route == "/rewards":
-                page.views.append(reward_view(page, todo_list))
-            elif page.route == "/history":
-                page.views.append(history_view(page, todo_list))
+        target_view = None
+
+        if not is_logged_in:
+            if current_route not in ["/login", "/register"]:
+                print("Not logged in, redirecting to /login")
+                page.route = "/login"
+                target_view = show_login_view()
+            elif current_route == "/login":
+                target_view = show_login_view()
             else:
-                await show_main_view()
-        elif page.route == "/login":
-            show_login_view()
-        elif page.route == "/register":
-            show_register_view(route)
+                target_view = show_register_view()
+            current_medal_count_display_main.value = "Medals: N/A"
+        else:
+            if current_route in ["/login", "/register"]:
+                print("Logged in, redirecting from auth page to /")
+                page.route = "/"
+                current_route = "/"
+
+            if current_route == "/rewards":
+                view = reward_view(page, todo_list, update_main_medal_display)
+                view.bottom_appbar = build_bottom_app_bar(current_route)
+                target_view = view
+            elif current_route == "/history":
+                view = history_view(page, todo_list)
+                view.bottom_appbar = build_bottom_app_bar(current_route)
+                target_view = view
+            else:
+                target_view = show_main_view()
+
+            update_main_medal_display()  # Ensure medal count is updated on navigation
+
+        if target_view:
+            page.views.append(target_view)
+        else:
+            print("Error: No target view determined, falling back to login.")
+            page.views.append(show_login_view())
+
         page.update()
+
+    # --- End modification ---
 
     def view_pop(view):
+        print(f"View popped: {view.route}")
         page.views.pop()
-        top_view = page.views[-1]
-        page.go(top_view.route)
-        page.update()
+        top_view = page.views[-1] if page.views else None
+        target_route = top_view.route if top_view else "/login"
+        print(f"Navigating back to: {target_route}")
+        page.go(target_route)
 
+    # --- App Initialization ---
     page.on_route_change = route_change
     page.on_view_pop = view_pop
-    page.overlay.append(file_picker)
-
-    username, user_id, access_token, refresh_token = await check_login()
-    if username:
-
-        todo_list = ToDoList(username=username, is_web_environment=page.web)
-        await todo_list.create_db_client()  # Ensure db_client is initialized
-        todo_list.set_user_id(user_id)
-        todo_list.set_refresh_token(refresh_token)
-
-        if (
-            access_token
-            and refresh_token
-            and isinstance(access_token, str)
-            and isinstance(refresh_token, str)
-        ):
-
-            if page.web:
-                print(
-                    f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                )
-                write_tokens_to_session(access_token, refresh_token)
-            else:
-                print(
-                    f"Storing tokens in session.json: {access_token}, {refresh_token}"
-                )
-                write_tokens_to_session(access_token, refresh_token)
-            todo_list.set_access_token(access_token)
-            todo_list.set_refresh_token(refresh_token)
-            await todo_list.db_client.set_access_token(access_token, refresh_token)
-        await route_change(page.route)
-    else:
-        show_login_view()
+    print("App initializing...")
+    page.go(page.route)
 
 
-ft.app(target=main)
+# --- Run the App ---
+if __name__ == "__main__":
+    # os.environ["FLET_FORCE_WEB_SOCKETS"] = "true"
+    ft.app(target=main)

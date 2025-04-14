@@ -175,3 +175,6 @@ pyproject.toml
 #test_supabase
 test_supabase.py
 test_supabase.pyc
+
+# config
+config.json

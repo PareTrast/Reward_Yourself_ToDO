@@ -1,5 +1,5 @@
 flet
 arrow 
-supabase
+supabase-py==2.5.0
 python-dotenv
 pyodide-http

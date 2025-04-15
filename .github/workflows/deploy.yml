@@ -1,0 +1,57 @@
+# Optional: Give your workflow a name
+name: Build and Deploy Flet App
+
+# Required: Define triggers for the workflow
+on:
+  push:
+    branches:
+      - main # Example: Trigger on push to the main branch
+  workflow_dispatch: # Example: Allow manual triggering from GitHub UI
+
+# Required: Define the jobs to run
+jobs:
+  build_and_deploy: # Name of your job (you can choose this)
+    runs-on: ubuntu-latest # Specify the runner environment
+    steps:
+      # Step 1: Check out your code
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Use a standard action
+
+      # Step 2: Set up Python (needed for Flet)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Or your desired Python version
+
+      # Step 3: Install Flet and dependencies (using your requirements.txt)
+      # Make sure requirements.txt is at the root or adjust the path
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt # Adjust path if requirements.txt is elsewhere
+
+      # Step 4: Build the Flet web app
+      - name: Build Flet web app
+        run: flet build web --base-url /Reward_Yourself_ToDO/ # Use your correct base URL
+
+      # Step 5: Inject Supabase Credentials (using the sed command from before)
+      - name: Inject Supabase Credentials into index.html
+        run: |
+          sed -i '/<script src="supabase_wrappers.js"><\/script>/i \
+          <script>\
+            window.SUPABASE_URL = "${{ secrets.SUPABASE_URL }}";\
+            window.SUPABASE_ANON_KEY = "${{ secrets.SUPABASE_ANON_KEY }}";\
+          <\/script>' build/web/index.html
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      # Step 6: Deploy to GitHub Pages (Example using a common action)
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web # The directory Flet builds into
+          # user_name: 'Your Name' # Optional: Configure committer name
+          # user_email: 'your.email@example.com' # Optional: Configure committer email
+

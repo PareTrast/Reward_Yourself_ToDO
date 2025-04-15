@@ -2,13 +2,15 @@ name: Inject Supabase Credentials into index.html
         # This uses 'sed' which is common in Linux runners.
         # If using a Windows runner, you might need PowerShell or a Python script.
         # It finds the line loading supabase_wrappers.js and inserts the script *before* it.
-      run: |
+        
+run: |
           sed -i '/<script src="supabase_wrappers.js"><\/script>/i \
           <script>\
             window.SUPABASE_URL = "${{ secrets.SUPABASE_URL }}";\
             window.SUPABASE_ANON_KEY = "${{ secrets.SUPABASE_ANON_KEY }}";\
           <\/script>' build/web/index.html
-       env:
+
+        env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         # Ensure this runs in the correct working directory if needed
